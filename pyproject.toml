@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "helmcode-whisper"
+version = "0.1.0"
+description = "Self-hosted meeting notes: records mic + system audio, transcribes with Whisper on Helmcode, diarizes locally with pyannote, and writes structured notes with DeepSeek V4 Flash."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Helmcode" }]
+keywords = ["meetings", "transcription", "whisper", "diarization", "self-hosted", "privacy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12",
+    "webrtcvad-wheels>=2.0.14",
+    "pyaudiowpatch>=0.2.12.7; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# Local speaker diarization. Never leaves the machine; the weights are a one-time
+# download from Hugging Face. Heavy (pulls torch), which is why it is opt-in.
+diarize = [
+    "pyannote.audio>=3.1",
+    "torch>=2.2",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+helmcode-whisper = "helmcode_whisper.cli:main"
+hcw = "helmcode_whisper.cli:main"
+
+[project.urls]
+Homepage = "https://helmcode.com"
+Source = "https://github.com/helmcode/helmcode-whisper"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/helmcode_whisper"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "helmcode_whisper/templates"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
