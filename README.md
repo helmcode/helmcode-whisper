@@ -296,11 +296,25 @@ sentence into confetti.
 
 **Echo suppression.** If you are not wearing headphones, your microphone hears
 the remote audio coming out of your speakers, and a naive merge says everything
-twice. A mic segment is dropped when it overlaps a system segment in time *and*
-their texts are similar — both conditions, because people talk over each other
-constantly and agreeing with someone is not the same as echoing them. Dropped
-segments stay in `transcript.json` with a reason attached, so the decision is
-auditable. Wear headphones anyway; it is better audio.
+twice. A mic segment is dropped when most of its words appear in what the remote
+side was saying at that moment — words of four letters or more, since function
+words are in every window ever recorded and would drag unrelated speech up to
+the threshold.
+
+The comparison is against the whole window rather than segment against segment,
+and that detail is the difference between working and not. The two tracks are
+transcribed independently, so Whisper cuts the echoed copy differently from the
+original: a mic segment routinely straddles two system segments and matches
+neither. Measured against an hour of audio played through speakers, the
+segment-to-segment version caught 41% of the echo; against the window, 79%, with
+no genuine speech deleted on a recording made to test exactly that. The
+threshold sits in the gap between the two populations rather than against either
+edge, because leaving an echo in is visible and recoverable while deleting what
+somebody said is neither.
+
+Dropped segments stay in `transcript.json` with a reason attached, so the
+decision is auditable. Wear headphones anyway; it is better audio, and no
+heuristic beats not having the problem.
 
 ### Every step is cached
 

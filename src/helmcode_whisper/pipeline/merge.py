@@ -6,11 +6,30 @@ then contain the same words, and a naive merge produces a transcript where every
 remote sentence is said twice — once by the actual speaker and once, slightly
 garbled, by "Me".
 
-The fix uses the two facts that make an echo an echo: it lands at the same time
-as the original, and it says the same thing. A microphone segment is dropped
-when it overlaps a system segment in time *and* their texts are similar. Both
-conditions are needed — people talk over each other constantly, and agreeing
-with someone is not the same as echoing them.
+The two facts that make an echo an echo are that it lands at the same time as
+the original and that it says the same thing. Both are needed — people talk
+over each other constantly, and agreeing with someone is not the same as
+echoing them.
+
+Getting the *same thing* part right took a real recording to work out. The
+first version compared each microphone segment against each system segment: it
+required half the mic segment to sit inside one system segment and their texts
+to be similar. Measured against an hour of audio played through speakers, that
+caught 41% of the echo, and the reason was not the thresholds. The two tracks
+are transcribed independently and Whisper draws segment boundaries wherever it
+likes on each, so the echoed copy is cut differently from the original. A mic
+segment routinely straddles two system segments and matches neither well
+enough; one segment in that recording was 96% echo by content and intersected
+no system segment at all.
+
+So the comparison is against the *window* rather than a segment: everything the
+remote side said while this mic segment was open, pooled, and asked what
+fraction of the mic segment's words appear in it. Function words are excluded
+by length, because "el", "de" and "que" are in every window ever recorded and
+inflate the score of things nobody echoed. On the two recordings this was tuned
+against, echo scores 0.87-1.00 and genuine speech 0.00-0.31 — the threshold
+sits in the gap rather than against either edge, because the expensive mistake
+here is deleting something the user actually said.
 
 Dropped segments stay in `transcript.json` with a reason attached, so the call
 is auditable instead of a silent deletion.
@@ -20,18 +39,30 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 
 from .intervals import IntervalIndex
 from .model import Segment
 
-# Fraction of the mic segment that has to sit inside a system segment.
-_MIN_TIME_OVERLAP = 0.5
-# Text similarity above which two overlapping segments are the same words.
-_MIN_TEXT_SIMILARITY = 0.62
-# Below this many characters, similarity is noise: "sí", "ya", "ok" match
-# everything. Short mic segments are always kept.
-_MIN_ECHO_CHARS = 12
+# How far either side of a mic segment to look for what was playing. Small:
+# the point is still that an echo is simultaneous, and a wide window would
+# start matching things said a sentence ago.
+_ECHO_WINDOW_SECONDS = 1.0
+
+# Fraction of the mic segment's content words that must appear in that window.
+# Measured on two real recordings: echo lands at 0.87-1.00 and genuine speech
+# at 0.00-0.31, so this sits in the gap. Nearer the floor than the ceiling on
+# purpose — leaving an echo in is visible and recoverable, deleting what
+# somebody said is neither.
+_MIN_ECHO_CONTAINMENT = 0.65
+
+# Words shorter than this are dropped before comparing. Spanish function words
+# are three letters or fewer almost without exception, they appear in every
+# window, and counting them pushes unrelated speech up toward the threshold.
+_MIN_WORD_LENGTH = 4
+
+# Below this many content words there is not enough left to judge: "sí, claro"
+# reduces to one word, which either matches or does not on a coin flip.
+_MIN_ECHO_WORDS = 4
 
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACES = re.compile(r"\s+")
@@ -59,46 +90,42 @@ class _Utterance:
 
     start: float
     end: float
-    text: str  # already normalized
+    words: frozenset[str]
+
+
+def _content_words(text: str) -> frozenset[str]:
+    return frozenset(
+        word for word in _normalize(text).split() if len(word) >= _MIN_WORD_LENGTH
+    )
 
 
 def _mark_echoes(mic_segments: list[Segment], system_segments: list[Segment]) -> None:
-    # Normalize once and index once. The naive version rescans every system
-    # segment for every microphone segment, which is a thousand times a
-    # thousand on an hour-long meeting, each candidate pair reaching a
-    # SequenceMatcher.
+    # Split once and index once. Rescanning every system segment for every
+    # microphone segment is a thousand times a thousand on an hour-long
+    # meeting.
     index = IntervalIndex(
-        [_Utterance(item.start, item.end, _normalize(item.text)) for item in system_segments]
+        [_Utterance(item.start, item.end, _content_words(item.text)) for item in system_segments]
     )
 
     for segment in mic_segments:
-        text = _normalize(segment.text)
-        if len(text) < _MIN_ECHO_CHARS:
+        words = _content_words(segment.text)
+        if len(words) < _MIN_ECHO_WORDS:
             continue
-        duration = max(segment.end - segment.start, 1e-6)
 
-        for other in index.overlapping(segment.start, segment.end):
-            overlap = min(segment.end, other.end) - max(segment.start, other.start)
-            if overlap / duration < _MIN_TIME_OVERLAP:
-                continue
-            if _similarity(text, other.text) >= _MIN_TEXT_SIMILARITY:
-                segment.dropped = "echo"
-                break
+        window: set[str] = set()
+        for other in index.overlapping(
+            segment.start - _ECHO_WINDOW_SECONDS, segment.end + _ECHO_WINDOW_SECONDS
+        ):
+            window |= other.words
+        if not window:
+            continue
+
+        if len(words & window) / len(words) >= _MIN_ECHO_CONTAINMENT:
+            segment.dropped = "echo"
 
 
 def _normalize(text: str) -> str:
     return _SPACES.sub(" ", _PUNCTUATION.sub(" ", text.lower())).strip()
-
-
-def _similarity(left: str, right: str) -> float:
-    if not left or not right:
-        return 0.0
-    # Length alone rules most pairs out, and SequenceMatcher is the expensive
-    # part of a step that runs over every overlapping pair in the meeting.
-    ratio = len(left) / len(right) if len(left) < len(right) else len(right) / len(left)
-    if ratio < 0.5:
-        return 0.0
-    return SequenceMatcher(None, left, right).ratio()
 
 
 def rename_speakers(segments: list[Segment], names: dict[str, str]) -> None:

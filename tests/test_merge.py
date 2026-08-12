@@ -69,3 +69,54 @@ def test_speaker_list_ignores_dropped_segments() -> None:
     segments = merge.merge([echo], [remote])
 
     assert merge.speaker_list(segments) == ["SPEAKER_00"]
+
+
+def test_echo_split_across_two_system_segments_is_still_dropped() -> None:
+    """The failure that made this heuristic catch 41% of real echo.
+
+    The two tracks are transcribed independently, so Whisper cuts the echoed
+    copy differently from the original. This mic segment says exactly what was
+    playing, using words from either side of a boundary, and intersects neither
+    system segment at all — the pairwise version had nothing to compare it to
+    and kept it.
+    """
+    first = system(10.0, 12.0, "el precio final sube a cuarenta euros")
+    second = system(13.0, 15.0, "por usuario y mes desde enero")
+    echo = mic(12.1, 12.9, "cuarenta euros por usuario desde enero")
+
+    merge.merge([echo], [first, second])
+
+    assert echo.dropped == "echo"
+
+
+def test_talking_about_the_same_topic_is_not_an_echo() -> None:
+    """Sharing a word with what is playing is not repeating it.
+
+    The expensive mistake is deleting something the user said, so a segment
+    that merely lands on the same subject has to survive.
+    """
+    remote = system(10.0, 14.0, "El precio final sube a cuarenta y dos euros por usuario")
+    reply = mic(11.0, 13.0, "espera, ese precio no es el que acordamos en marzo pasado")
+
+    merge.merge([reply], [remote])
+
+    assert reply.dropped is None
+
+
+def test_function_words_alone_cannot_trigger_a_drop() -> None:
+    """"que", "de" and "por" are in every window ever recorded."""
+    remote = system(10.0, 14.0, "cuarenta y dos euros por usuario, que es lo acordado")
+    filler = mic(10.5, 12.0, "y que por eso, de lo que va")
+
+    merge.merge([filler], [remote])
+
+    assert filler.dropped is None
+
+
+def test_an_echo_with_nothing_playing_is_impossible() -> None:
+    """No window, no verdict. A mic-only recording keeps everything."""
+    alone = mic(10.0, 14.0, "el precio final sube a cuarenta y dos euros por usuario")
+
+    merge.merge([alone], [])
+
+    assert alone.dropped is None
