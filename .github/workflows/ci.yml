@@ -18,7 +18,7 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
@@ -28,16 +28,29 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ffmpeg -y --no-progress
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
 
+      # A virtualenv, not `--system`. Two reasons, both of which bit on the
+      # first run this workflow ever did: Ubuntu's Python is externally managed
+      # and refuses a system install outright, and `--system` ignores the
+      # matrix entirely — every job installed into whatever Python the runner
+      # happened to ship, so the "3.11" job reported "Using Python 3.12.3" and
+      # neither version was actually being tested.
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[dev]"
+
+      # `uv run` picks up the .venv above on both Windows and Linux without
+      # anyone having to activate it.
+      - name: Check the version under test
+        run: uv run python -c "import sys; print(sys.version)"
 
       - name: Lint
-        run: ruff check src tests
+        run: uv run ruff check src tests
 
       # No test here touches the network or an audio device; the suite covers
       # chunk planning, echo suppression, parsing, storage and the no-egress
       # check. Anything needing the API is run by hand and recorded in NUMBERS.md.
       - name: Test
-        run: pytest -q
+        run: uv run pytest -q
