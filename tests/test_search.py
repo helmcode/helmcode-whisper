@@ -10,6 +10,7 @@ from helmcode_whisper.ui.html import render_html
 def hit(passage_id: int) -> search.Hit:
     return search.Hit(
         passage_id=passage_id,
+        meeting_id="2026-08-11-m",
         meeting_title="m",
         meeting_date="2026-08-11",
         start=0.0,

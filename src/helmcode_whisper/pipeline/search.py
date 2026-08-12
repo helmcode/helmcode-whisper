@@ -48,6 +48,10 @@ RRF_K = 60
 @dataclass
 class Hit:
     passage_id: int
+    # The meeting's folder name. A hit that cannot be traced back to the
+    # recording it came from is a dead end: anything other than the terminal —
+    # a UI, a script — needs to open the meeting, not just read the sentence.
+    meeting_id: str
     meeting_title: str
     meeting_date: str
     start: float
@@ -186,7 +190,7 @@ def _hydrate(
     by_id = {passage_id: (score, source) for passage_id, score, source in scored}
     placeholders = ",".join("?" * len(by_id))
     rows = connection.execute(
-        f"SELECT p.id, p.start, p.speaker, p.text, m.title, m.date "
+        f"SELECT p.id, p.start, p.speaker, p.text, m.id AS meeting_id, m.title, m.date "
         f"FROM passages p JOIN meetings m ON m.id = p.meeting_id "
         f"WHERE p.id IN ({placeholders})",
         tuple(by_id),
@@ -198,6 +202,7 @@ def _hydrate(
         hits.append(
             Hit(
                 passage_id=row["id"],
+                meeting_id=row["meeting_id"],
                 meeting_title=row["title"],
                 meeting_date=row["date"],
                 start=row["start"],
