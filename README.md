@@ -66,13 +66,22 @@ can pre-download the weights and then work fully offline.
 Requirements: Python 3.11+, `ffmpeg` on your PATH, and a Helmcode API key.
 
 ```bash
+uv tool install git+https://github.com/helmcode/helmcode-whisper
+
+cp .env.example .env                    # then paste your HELMCODE_API_KEY
+hcw doctor                              # checks devices, ffmpeg, models, everything
+```
+
+Not on PyPI. Installing from git is one line either way, and a package index
+entry is a promise about versions that a 0.1 with two untested platforms has no
+business making yet.
+
+Working on it instead of with it:
+
+```bash
 git clone https://github.com/helmcode/helmcode-whisper
 cd helmcode-whisper
-
-uv venv && uv pip install -e .          # or: python -m venv .venv && pip install -e .
-cp .env.example .env                    # then paste your HELMCODE_API_KEY
-
-hcw doctor                              # checks devices, ffmpeg, models, everything
+uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
 ```
 
 `hcw doctor` is the first thing to run and the first thing to paste into an
@@ -88,7 +97,48 @@ hcw process
 ```
 
 `process` prints the summary and the action items in your terminal and writes
-`notes.md`, `notes.html` and `transcript.json` next to the audio.
+`notes.md`, `notes.html` and `transcript.json` next to the audio. Real output
+from a three-minute two-party recording, colour stripped:
+
+```
+P R O C E S S I N G
+  ~/helmcode-whisper/2026-08-12-pricing-review
+
+ + mic     2.2 min  1.2 min of speech in 2 chunks
+ + system  3.0 min  1.8 min of speech in 2 chunks
+  transcribing ------------------------------ 4/4 0:00:05
+ + transcribed 11 segments  language es
+ + diarization  47 turns on cpu  89s, alongside transcription
+ + transcript  13 turns  SPEAKER_00, Me, SPEAKER_02
+ + notes generated via json_schema  958 in / 624 out tokens
+ + indexed  11 passages  11 embedded
+
+S U M M A R Y ────────────────────────────────────────────────────────────
+  La reunión revisó el estado del proyecto de notas de reuniones. Se
+confirmó que la transcripción funciona con Whisper y el troceo por
+silencios. Se decidió mantener la diarización como opcional y documentar
+el tiempo real que tarda en la máquina. [...]
+
+D E C I S I O N S
+  · La diarización se mantiene como opcional.
+  · Se documentará el tiempo real que tarda la diarización en la máquina.
+
+A C T I O N   I T E M S
+  □ Conseguir la clave de la API y aceptar las condiciones de Hugging
+    Face.  Borja · viernes
+
+F I L E S ─────────────────────────────────────────────────────────────────
+ + notes.md         ~/helmcode-whisper/2026-08-12-pricing-review
+ + notes.html       ~/helmcode-whisper/2026-08-12-pricing-review
+ + transcript.json  ~/helmcode-whisper/2026-08-12-pricing-review
+
+  prepare 2s  transcribe 5s  diarize 84s  notes 8s  index 2s   total 101s
+```
+
+Note `diarize 84s` against `diarization 89s`: diarization ran while the
+transcription requests were in flight, so it only cost the pipeline what it had
+left to do when they came back. The notes are in Spanish because that is what
+`templates/notes.md` asks for — see [Customizing the notes](#customizing-the-notes).
 
 ### Getting system audio, per platform
 
@@ -122,10 +172,10 @@ virtual audio device:
 4. Set that Multi-Output Device as the system output in **Sound** settings.
 5. Run `hcw doctor` — `system` should now show BlackHole.
 
-> Screenshots for these steps are not in the repo yet.
-
-A native ScreenCaptureKit helper would remove this whole dance and is on the
-roadmap.
+These steps are written from the BlackHole documentation rather than from a
+machine that ran them, which is the same reason macOS is marked untested in the
+table above. A native ScreenCaptureKit helper would remove the whole dance and
+is on the roadmap.
 
 **No system audio at all?** The tool degrades on purpose: it records the
 microphone only, warns you once, and the rest of the pipeline works. That is the

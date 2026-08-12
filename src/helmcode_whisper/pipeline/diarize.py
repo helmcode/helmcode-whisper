@@ -172,7 +172,15 @@ def diarize(wav_path: Path, hf_token: str | None) -> tuple[list[Turn], str]:
     # both more reliable and one less thing that can differ between machines.
     samples, samplerate = sf.read(str(wav_path), dtype="float32", always_2d=True)
     waveform = torch.from_numpy(samples.T.copy())  # pyannote wants (channel, time)
-    result = pipeline({"waveform": waveform, "sample_rate": samplerate})
+
+    with warnings.catch_warnings():
+        # pyannote's pooling layer takes the standard deviation of windows that
+        # are sometimes a single frame long, and torch warns about the degrees
+        # of freedom every time. It is normal, it is internal to the model, and
+        # there is nothing the person running a meeting can do about it — but
+        # it lands five lines of traceback in the middle of the output.
+        warnings.filterwarnings("ignore", message=".*degrees of freedom is <= 0.*")
+        result = pipeline({"waveform": waveform, "sample_rate": samplerate})
 
     # pyannote 3 returns an Annotation. pyannote 4 wraps it in a DiarizeOutput
     # carrying two of them, and describes `exclusive_speaker_diarization` as the
