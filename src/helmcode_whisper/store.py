@@ -54,6 +54,18 @@ class Meeting:
         return self.path / "notes.md"
 
     @property
+    def notes_json(self) -> Path:
+        """The notes in the shape the schema produced them.
+
+        `notes.md` is for reading and `notes.html` is for showing; neither can
+        be turned back into decisions, owners and due dates without guessing.
+        Anything building on this tool wants the structure, and the only copy
+        used to live in `.cache/`, where deleting a cache — a thing caches
+        invite you to do — took the notes away from every reader but the file.
+        """
+        return self.path / "notes.json"
+
+    @property
     def notes_html(self) -> Path:
         return self.path / "notes.html"
 

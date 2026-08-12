@@ -81,3 +81,40 @@ def test_reindexing_replaces_rather_than_duplicates(tmp_path) -> None:
 
     count = connection.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
     assert count == 1
+
+
+def test_deleting_a_meeting_takes_its_passages_and_vectors(tmp_path) -> None:
+    """A folder deleted from disk must not keep answering searches."""
+    import numpy as np
+
+    connection = index.connect(tmp_path / "index.sqlite3")
+    for meeting_id in ("a", "b"):
+        index.index_meeting(
+            connection,
+            None,
+            meeting_id=meeting_id,
+            title=meeting_id,
+            date="2026-08-12",
+            path=tmp_path / meeting_id,
+            passages=[index.Passage(0.0, 2.0, ME, f"hola desde {meeting_id}")],
+            embed_model="embed",
+        )
+    connection.execute(
+        "INSERT INTO vectors (passage_id, dim, vec) "
+        "SELECT id, 2, ? FROM passages WHERE meeting_id = 'a'",
+        (np.zeros(2, dtype=np.float32).tobytes(),),
+    )
+    connection.commit()
+
+    removed = index.delete_meeting(connection, "a")
+
+    assert removed == 1
+    assert connection.execute("SELECT COUNT(*) FROM meetings").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM passages").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == 0
+    # The full-text table is external-content, so the cascade never reaches it.
+    hits = connection.execute(
+        "SELECT rowid FROM passages_fts WHERE passages_fts MATCH 'hola'"
+    ).fetchall()
+    assert len(hits) == 1
+    connection.close()

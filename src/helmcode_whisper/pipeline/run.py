@@ -194,6 +194,9 @@ def run_process(
                 "duration_seconds": meta.get("duration_seconds") or round(_span(merged), 2),
             }
         )
+        meeting.notes_json.write_text(
+            json.dumps(note_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         meeting.notes_md.write_text(notes.render_markdown(note_data, meta), encoding="utf-8")
         meeting.notes_html.write_text(
             render_html(note_data, meta, transcript), encoding="utf-8"

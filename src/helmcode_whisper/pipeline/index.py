@@ -120,12 +120,7 @@ def index_meeting(
     embed_model: str,
 ) -> dict[str, int]:
     """Replace this meeting's rows. Returns counts for the run summary."""
-    connection.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
-    connection.execute(
-        "DELETE FROM passages_fts WHERE rowid IN (SELECT id FROM passages WHERE meeting_id = ?)",
-        (meeting_id,),
-    )
-    connection.execute("DELETE FROM passages WHERE meeting_id = ?", (meeting_id,))
+    delete_meeting(connection, meeting_id, commit=False)
     connection.execute(
         "INSERT INTO meetings (id, title, date, path) VALUES (?, ?, ?, ?)",
         (meeting_id, title, date, str(path)),
@@ -162,6 +157,32 @@ def index_meeting(
 
     connection.commit()
     return {"passages": len(passages), "embedded": embedded}
+
+
+def delete_meeting(
+    connection: sqlite3.Connection, meeting_id: str, *, commit: bool = True
+) -> int:
+    """Remove one meeting from the index. Returns how many passages went.
+
+    Deleting the folder is not enough on its own: the passages outlive it and
+    search keeps offering sentences from a recording that is no longer there.
+
+    `passages_fts` is an external-content table, so the cascade from `meetings`
+    does not reach it and its rows have to go first, while the passage ids they
+    are keyed on still exist.
+    """
+    removed = connection.execute(
+        "SELECT COUNT(*) FROM passages WHERE meeting_id = ?", (meeting_id,)
+    ).fetchone()[0]
+    connection.execute(
+        "DELETE FROM passages_fts WHERE rowid IN (SELECT id FROM passages WHERE meeting_id = ?)",
+        (meeting_id,),
+    )
+    connection.execute("DELETE FROM passages WHERE meeting_id = ?", (meeting_id,))
+    connection.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+    if commit:
+        connection.commit()
+    return int(removed)
 
 
 def load_vectors(connection: sqlite3.Connection) -> tuple[list[int], np.ndarray]:
