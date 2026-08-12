@@ -84,6 +84,22 @@ HELMCODE_THEME = Theme(
 
 _console: Console | None = None
 _err_console: Console | None = None
+_human_output_on_stderr = False
+
+
+def send_human_output_to_stderr() -> None:
+    """Move the terminal interface off stdout, before anything is printed.
+
+    For `--progress-json`, where stdout belongs to the machine-readable event
+    stream. Two audiences on one pipe means a reader has to tell hairlines from
+    JSON, so they get a stream each.
+
+    Must be called before the first `console()`, which is why the CLI does it
+    while parsing arguments rather than on the way into the pipeline.
+    """
+    global _human_output_on_stderr, _console
+    _human_output_on_stderr = True
+    _console = None
 
 
 def _speak_utf8(stream: object) -> None:
@@ -113,8 +129,11 @@ def console() -> Console:
     """The one stdout console. Themed, and reused so Rich shares its state."""
     global _console
     if _console is None:
-        _speak_utf8(sys.stdout)
-        _console = Console(theme=HELMCODE_THEME, highlight=False)
+        target = sys.stderr if _human_output_on_stderr else sys.stdout
+        _speak_utf8(target)
+        _console = Console(
+            theme=HELMCODE_THEME, highlight=False, stderr=_human_output_on_stderr
+        )
     return _console
 
 

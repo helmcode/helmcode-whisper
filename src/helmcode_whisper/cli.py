@@ -189,21 +189,46 @@ def process(
     force: Annotated[
         bool, typer.Option("--force", help="Ignore cached step results and redo everything.")
     ] = False,
+    progress_json: Annotated[
+        bool,
+        typer.Option(
+            "--progress-json",
+            help="Emit one JSON step event per line on stdout, and move the human-readable "
+            "output to stderr. For front ends, so they do not have to scrape it.",
+        ),
+    ] = False,
 ) -> None:
     """Transcribe, diarize, summarize and index a recorded meeting."""
+    from .pipeline.progress import JsonProgress, Progress
     from .pipeline.run import run_process
     from .record import resolve_meeting
 
+    events: Progress = Progress()
+    if progress_json:
+        # Before the first console() call, or the terminal interface has already
+        # claimed stdout and the two audiences end up interleaved on one pipe.
+        from .ui.theme import send_human_output_to_stderr
+
+        send_human_output_to_stderr()
+        events = JsonProgress()
+
     def go() -> None:
         config = load_config()
-        run_process(
-            config,
-            resolve_meeting(config, meeting),
-            language=language,
-            diarize_enabled=not no_diarize,
-            index_enabled=not no_index,
-            force=force,
-        )
+        try:
+            run_process(
+                config,
+                resolve_meeting(config, meeting),
+                language=language,
+                diarize_enabled=not no_diarize,
+                index_enabled=not no_index,
+                force=force,
+                events=events,
+            )
+        except Exception as exc:
+            # A reader watching the event stream should be told the run died,
+            # rather than having the pipe close on it and left guessing.
+            events.event(event="error", message=f"{type(exc).__name__}: {exc}")
+            raise
 
     _run(go)
 

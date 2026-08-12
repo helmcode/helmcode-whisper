@@ -35,6 +35,7 @@ from ..store import Meeting, file_fingerprint
 from ..ui import console, eyebrow, hairline, progress, status_line
 from ..ui.html import render_html
 from . import audio, diarize, index, merge, notes, stt
+from . import progress as progress_events
 from .model import Segment, Transcript
 
 
@@ -46,9 +47,11 @@ def run_process(
     diarize_enabled: bool = True,
     index_enabled: bool = True,
     force: bool = False,
+    events: progress_events.Progress | None = None,
 ) -> None:
     audio.require_ffmpeg()
     config.require_api_key()
+    events = events or progress_events.Progress()
 
     meta = meeting.load_meta()
     timings: dict[str, float] = {}
@@ -66,8 +69,17 @@ def run_process(
     if not sources:
         raise RuntimeError(f"No audio files in {meeting.path}")
 
+    events.event(
+        event="start",
+        meeting=meeting.path.name,
+        title=str(meta.get("title", meeting.path.name)),
+        duration_seconds=meta.get("duration_seconds") or 0,
+        steps=list(progress_events.STEPS),
+    )
+
     with HelmcodeClient(config) as client:
         # ── 1-2. prepare and plan, both tracks at once ───────────
+        events.step("prepare", "running")
         started = time.monotonic()
         with ThreadPoolExecutor(max_workers=len(sources)) as pool:
             tracks = list(
@@ -89,6 +101,14 @@ def run_process(
         cached_steps["prepare"] = all(track.from_cache for track in tracks)
 
         total_chunks = sum(len(track.chunks) for track in tracks)
+        events.step(
+            "prepare",
+            "done",
+            seconds=round(timings["prepare"], 2),
+            from_cache=cached_steps["prepare"],
+            speech_seconds=round(sum(track.speech_seconds for track in tracks), 1),
+            chunks=total_chunks,
+        )
         if not total_chunks:
             raise RuntimeError("No speech detected in the recording.")
 
@@ -101,8 +121,30 @@ def run_process(
             force=force,
         )
         diarization.start()
+        # Announced as running now, not after transcription: it *is* running,
+        # underneath, and a reader that only heard about it later would show a
+        # step sitting idle for the whole time it was actually working.
+        events.step(
+            "diarize",
+            "running" if diarization.will_run else "skipped",
+            estimate_seconds=progress_events.estimate_diarization_seconds(
+                float(meta.get("duration_seconds") or 0)
+            )
+            if diarization.will_run
+            else None,
+            reason=diarization.skip_reason,
+        )
 
+        events.step("transcribe", "running", total=total_chunks)
         started = time.monotonic()
+        done_chunks = 0
+
+        def chunk_done() -> None:
+            nonlocal done_chunks
+            bar.advance(task)
+            done_chunks += 1
+            events.event(event="chunks", done=done_chunks, total=total_chunks)
+
         with progress() as bar:
             task = bar.add_task("transcribing", total=total_chunks)
             transcription = stt.transcribe(
@@ -113,10 +155,18 @@ def run_process(
                 model=config.stt_model,
                 force=force,
                 concurrency=config.stt_concurrency,
-                on_chunk_done=lambda: bar.advance(task),
+                on_chunk_done=chunk_done,
             )
         timings["transcribe"] = time.monotonic() - started
         cached_steps["transcribe"] = transcription.fully_cached
+        events.step(
+            "transcribe",
+            "done",
+            seconds=round(timings["transcribe"], 2),
+            from_cache=transcription.fully_cached,
+            segments=sum(len(items) for items in transcription.segments.values()),
+            language=transcription.language,
+        )
 
         segments = transcription.segments
         detected_language = transcription.language
@@ -134,8 +184,19 @@ def run_process(
         started = time.monotonic()
         diarized, device, cached_steps["diarize"] = diarization.apply(segments.get("system") or [])
         timings["diarize"] = time.monotonic() - started
+        if diarization.will_run:
+            events.step(
+                "diarize",
+                "done" if diarized else "failed",
+                seconds=round(diarization.seconds, 2),
+                waited_seconds=round(timings["diarize"], 2),
+                device=device,
+                from_cache=cached_steps["diarize"],
+                reason=None if diarized else diarization.problem,
+            )
 
         # ── 5. merge ─────────────────────────────────────────────
+        events.step("merge", "running")
         merged = merge.merge(segments.get("mic", []), segments.get("system", []))
         echoes = sum(1 for segment in merged if segment.dropped == "echo")
         if echoes:
@@ -158,8 +219,16 @@ def run_process(
         status_line(
             "ok", f"transcript  {len(transcript.kept)} turns", ", ".join(transcript.speakers)
         )
+        events.step(
+            "merge",
+            "done",
+            turns=len(transcript.kept),
+            speakers=transcript.speakers,
+            echoes_dropped=echoes,
+        )
 
         # ── 6. notes ─────────────────────────────────────────────
+        events.step("notes", "running")
         started = time.monotonic()
         duration_minutes = (meta.get("duration_seconds") or _span(merged)) / 60
         cached_notes = None if force else meeting.read_cached_json("notes.json")
@@ -184,6 +253,15 @@ def run_process(
                 f"{note_stats.get('completion_tokens', 0)} out tokens",
             )
         timings["notes"] = time.monotonic() - started
+        events.step(
+            "notes",
+            "done",
+            seconds=round(timings["notes"], 2),
+            from_cache=cached_steps["notes"],
+            mode=note_stats.get("mode"),
+            prompt_tokens=note_stats.get("prompt_tokens", 0),
+            completion_tokens=note_stats.get("completion_tokens", 0),
+        )
 
         meta = meeting.save_meta(
             {
@@ -203,6 +281,8 @@ def run_process(
         )
 
         # ── 7. index ─────────────────────────────────────────────
+        events.step("index", "running" if index_enabled else "skipped", reason=
+                    None if index_enabled else "--no-index")
         started = time.monotonic()
         index_stats = {"passages": 0, "embedded": 0}
         if index_enabled:
@@ -211,6 +291,8 @@ def run_process(
             status_line("skip", "indexing disabled", "--no-index")
         timings["index"] = time.monotonic() - started
         cached_steps["index"] = False
+        if index_enabled:
+            events.step("index", "done", seconds=round(timings["index"], 2), **index_stats)
 
     run_record = {
         "processed_at": datetime.now().isoformat(timespec="seconds"),
@@ -242,6 +324,15 @@ def run_process(
         }
     )
 
+    events.event(
+        event="done",
+        meeting=meeting.path.name,
+        timings_seconds=run_record["timings_seconds"],
+        diarization_seconds=run_record["diarization_seconds"],
+        total_seconds=round(sum(timings.values()), 2),
+        summary=note_data.get("summary", ""),
+        speakers=transcript.speakers,
+    )
     _print_summary(meeting, note_data, timings)
 
 
@@ -391,6 +482,20 @@ class _Diarization:
             self._skip = "no system track to separate"
         elif not track.chunks:
             self._skip = "no speech on the system track"
+
+    @property
+    def will_run(self) -> bool:
+        """Whether there is anything to wait for. Known before starting."""
+        return self._skip is None
+
+    @property
+    def skip_reason(self) -> str | None:
+        return self._skip
+
+    @property
+    def problem(self) -> str | None:
+        """Why it produced no turns. Only meaningful once `apply` has returned."""
+        return self._outcome.problem
 
     def start(self) -> None:
         if self._skip is not None:
