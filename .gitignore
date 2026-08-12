@@ -11,6 +11,9 @@ build/
 *.wav
 *.ogg
 
-# Internal working documents for the article — never published.
+# Internal working documents and the tooling that produced them — never
+# published. The scripts are measurement harnesses, not part of the tool.
 NUMBERS.md
 PLAN.md
+measure_60min.py
+ram_curve.py
