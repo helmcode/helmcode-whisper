@@ -337,14 +337,40 @@ transcription of each one, the chunk plan, and the diarization.
     audio-mic.wav        your microphone
     audio-system.wav     everyone else
     transcript.json      segments with timestamps and speakers
-    notes.md             the notes
+    notes.json           the notes as structure: decisions, owners, due dates
+    notes.md             the same notes, for reading
     notes.html           the same notes, styled, fully self-contained
     meta.json            devices, timings, token counts, language
     .cache/              chunk audio and per-step results
 ```
 
+`notes.json` is the one to build on. `notes.md` reads well and `notes.html` shares
+well, and neither can be turned back into an owner and a due date without
+guessing.
+
 `~/helmcode-whisper/index.sqlite3` holds the search index across all meetings.
 Delete a meeting folder and it is gone; nothing else has a copy.
+
+### Driving it from something other than a terminal
+
+```bash
+hcw process --progress-json
+```
+
+One JSON object per line on stdout, with the terminal output moved to stderr so
+the two audiences do not interleave. Every step reports when it starts and
+finishes, transcription reports fragments done out of the total, and diarization
+carries an estimate derived from the factor measured on this machine — omitted
+entirely on a GPU, which nobody has measured.
+
+```
+{"event": "step", "step": "transcribe", "state": "running", "total": 69}
+{"event": "chunks", "done": 34, "total": 69}
+{"event": "step", "step": "diarize", "state": "running", "estimate_seconds": 1620}
+```
+
+Fields are additive: ignore one you do not know, and a new one will not break a
+reader that already works.
 
 ---
 
