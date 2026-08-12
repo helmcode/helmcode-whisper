@@ -19,8 +19,10 @@ is auditable instead of a silent deletion.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from .intervals import IntervalIndex
 from .model import Segment
 
 # Fraction of the mic segment that has to sit inside a system segment.
@@ -51,8 +53,23 @@ def merge(
     return merged
 
 
+@dataclass(frozen=True)
+class _Utterance:
+    """A system segment reduced to what echo detection compares."""
+
+    start: float
+    end: float
+    text: str  # already normalized
+
+
 def _mark_echoes(mic_segments: list[Segment], system_segments: list[Segment]) -> None:
-    normalized_system = [(segment, _normalize(segment.text)) for segment in system_segments]
+    # Normalize once and index once. The naive version rescans every system
+    # segment for every microphone segment, which is a thousand times a
+    # thousand on an hour-long meeting, each candidate pair reaching a
+    # SequenceMatcher.
+    index = IntervalIndex(
+        [_Utterance(item.start, item.end, _normalize(item.text)) for item in system_segments]
+    )
 
     for segment in mic_segments:
         text = _normalize(segment.text)
@@ -60,15 +77,11 @@ def _mark_echoes(mic_segments: list[Segment], system_segments: list[Segment]) ->
             continue
         duration = max(segment.end - segment.start, 1e-6)
 
-        for other, other_text in normalized_system:
-            if other.end < segment.start:
-                continue
-            if other.start > segment.end:
-                break
+        for other in index.overlapping(segment.start, segment.end):
             overlap = min(segment.end, other.end) - max(segment.start, other.start)
             if overlap / duration < _MIN_TIME_OVERLAP:
                 continue
-            if _similarity(text, other_text) >= _MIN_TEXT_SIMILARITY:
+            if _similarity(text, other.text) >= _MIN_TEXT_SIMILARITY:
                 segment.dropped = "echo"
                 break
 

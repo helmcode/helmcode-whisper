@@ -18,6 +18,17 @@ DEFAULT_NOTES_MODEL = "deepseek-v4-flash"
 DEFAULT_EMBED_MODEL = "qwen3-embedding"
 DEFAULT_RERANK_MODEL = "rerank"
 
+# Transcription requests in flight at once, across both tracks. The endpoint
+# caps a request at ~2 minutes of audio, so an hour-long meeting is ~70 of them
+# and this number is most of what decides how long `process` takes.
+#
+# Four, because the API enforces `max_parallel_requests: 5` per key and answers
+# a sixth with a 429. Measured, not guessed: six produced
+# "Limit type: max_parallel_requests. Current limit: 5, Remaining: 0" against
+# the real endpoint. Four leaves a slot free so a `doctor` or a `search` running
+# alongside does not push `process` over the edge.
+DEFAULT_STT_CONCURRENCY = 4
+
 
 class ConfigError(RuntimeError):
     """Raised when a command needs configuration the user has not provided."""
@@ -33,6 +44,7 @@ class Config:
     notes_model: str
     embed_model: str
     rerank_model: str
+    stt_concurrency: int
 
     def require_api_key(self) -> str:
         if not self.api_key:
@@ -81,4 +93,19 @@ def load_config() -> Config:
         notes_model=os.environ.get("HCW_NOTES_MODEL", DEFAULT_NOTES_MODEL),
         embed_model=os.environ.get("HCW_EMBED_MODEL", DEFAULT_EMBED_MODEL),
         rerank_model=os.environ.get("HCW_RERANK_MODEL", DEFAULT_RERANK_MODEL),
+        stt_concurrency=_positive_int("HCW_STT_CONCURRENCY", DEFAULT_STT_CONCURRENCY),
     )
+
+
+def _positive_int(name: str, default: int) -> int:
+    """An environment override that refuses to be zero, negative or nonsense."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a whole number, not {raw!r}.") from exc
+    if value < 1:
+        raise ConfigError(f"{name} must be at least 1, not {value}.")
+    return value

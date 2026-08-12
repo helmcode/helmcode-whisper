@@ -14,6 +14,8 @@ package is allowed to name a colour.
 
 from __future__ import annotations
 
+import sys
+
 from rich.console import Console
 from rich.theme import Theme
 
@@ -84,10 +86,34 @@ _console: Console | None = None
 _err_console: Console | None = None
 
 
+def _speak_utf8(stream: object) -> None:
+    """Stop a character being able to kill the process.
+
+    Windows still hands Python a cp1252 stdout in plenty of situations —
+    a redirected pipe, a legacy console — and every part of this interface is
+    drawn with characters cp1252 does not have: the hairline rules, the level
+    meters, the ☐ beside each action item. Encoding one of those raises
+    UnicodeEncodeError from inside the print, which on `process` means the
+    transcript is written, the notes are written, the requests are paid for,
+    and the run still ends in a traceback.
+
+    Worst case the terminal cannot render what it is sent and shows the wrong
+    glyph. That is a cosmetic problem. Losing the run is not.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:  # not a text stream, e.g. already wrapped in tests
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        pass
+
+
 def console() -> Console:
     """The one stdout console. Themed, and reused so Rich shares its state."""
     global _console
     if _console is None:
+        _speak_utf8(sys.stdout)
         _console = Console(theme=HELMCODE_THEME, highlight=False)
     return _console
 
@@ -96,5 +122,6 @@ def err_console() -> Console:
     """Errors and warnings go to stderr so `hcw search ... > file` stays clean."""
     global _err_console
     if _err_console is None:
+        _speak_utf8(sys.stderr)
         _err_console = Console(theme=HELMCODE_THEME, highlight=False, stderr=True)
     return _err_console

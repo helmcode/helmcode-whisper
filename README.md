@@ -187,8 +187,8 @@ flowchart TB
         SYSWAV --> PREP
         PREP --> VAD["VAD chunking<br/>≤110 s on silence boundaries"]
         VAD --> OPUS["Opus 24 kbps chunks"]
-        OPUS --> STT["Whisper<br/>4 concurrent requests"]
-        SYSWAV --> DIA["pyannote<br/>LOCAL, CPU or local GPU"]
+        OPUS --> STT["Whisper<br/>4 concurrent requests<br/>both tracks, one pool"]
+        PREP --> DIA["pyannote<br/>LOCAL, CPU or local GPU<br/>runs alongside Whisper"]
         STT --> MERGE["merge + echo suppression"]
         DIA --> MERGE
         MERGE --> TRANS["transcript.json"]
@@ -206,7 +206,7 @@ leave the machine, and they only reach `HELMCODE_BASE_URL` —
 `tests/test_no_egress.py` fails the build if any other host appears in the
 package.
 
-### Three decisions worth explaining
+### Decisions worth explaining
 
 **Two tracks, never mixed.** Recording the microphone and the system separately
 solves half of diarization for free: near versus far is decided by which file
@@ -218,7 +218,22 @@ therefore ~35 chunks per track, ~70 requests. Chunks are cut on silence found by
 VAD so sentences survive; long silences fall outside every chunk and are never
 uploaded; and only when speech runs unbroken past the limit is a cut forced,
 with 2 s of overlap so the model has context on both sides. Requests run four at
-a time — sequentially, `process` would take longer than the meeting did.
+a time through a single pool covering both tracks — sequentially, `process`
+would take longer than the meeting did, and a pool per track would leave the
+microphone waiting for the system audio to finish. Four rather than more
+because the API allows five parallel requests per key and 429s the sixth;
+`HCW_STT_CONCURRENCY` is there if your key says otherwise. On an 11-chunk
+recording, one at a time took 22 s and four at a time took 2-3 s.
+
+**Diarization runs underneath transcription.** It needs the prepared system
+track and nothing else — not the transcript — so it starts as soon as that file
+exists rather than after the last chunk comes back. It is local CPU work and
+transcription is almost entirely idle waiting on HTTP, so running them in
+sequence means each one starves the resource the other wants. Since diarization
+is the most expensive step by a wide margin, what it costs the pipeline is now
+only whatever it still has left to do when transcription finishes. `meta.json`
+records both numbers: `timings_seconds.diarize` is the wait, and
+`diarization_seconds` is what it cost on its own.
 
 **Speakers are assigned per word, not per segment.** Whisper draws segment
 boundaries from punctuation and prosody, and it will happily put two people in
@@ -243,6 +258,11 @@ Each step writes its result to the meeting's `.cache/` before the next one
 starts. If the merge fails, `process` does not re-transcribe an hour of audio.
 Fix the problem, run it again, and only the broken step costs anything.
 `--force` throws the cache away.
+
+Cached entries are keyed by a content hash of the audio they came from, not by
+position, so nothing survives that should not: change the recording and every
+downstream result for it is a miss. That covers the encoded chunks, the
+transcription of each one, the chunk plan, and the diarization.
 
 ---
 
@@ -302,8 +322,11 @@ Then, once:
 2. Put a Hugging Face token in `.env` as `HF_TOKEN`.
 
 It uses a local CUDA GPU if you have one and CPU otherwise. On CPU it is the
-slowest step in the pipeline by a wide margin. Skip it with `--no-diarize` and
-you still get the me/others split, which is often enough for a two-party call.
+slowest step in the pipeline by a wide margin, which is why it is started early
+and runs while the transcription requests are in flight — on a meeting whose
+transcription takes longer than its diarization, it becomes free. Skip it with
+`--no-diarize` and you still get the me/others split, which is often enough for
+a two-party call.
 
 ---
 
@@ -343,6 +366,15 @@ chunk containing two languages gets transcribed in one of them and *translated*
 from the other. Pass `--language` when you know it; expect the effect when a
 meeting genuinely code-switches. Per-chunk language detection is why this shows
 up as whole passages in the wrong language rather than odd words.
+
+**`hcw doctor` says pyannote "will not import: cannot import name ... from
+`torch._dynamo`"** — pyannote is installed and its torch is not usable, usually
+after torch was upgraded in place and left a half-matched tree behind.
+Reinstall the extra: `uv pip install --reinstall 'helmcode-whisper[diarize]'`.
+Until then `process` keeps running with the me/others split. This message
+deliberately does *not* say "pyannote is not installed" — that is a different
+problem, and sending you to install something you already have is worse than
+saying nothing.
 
 **`OSError [WinError 4551]` loading `torch/lib/shm.dll` on Windows** — Smart App
 Control blocked an unsigned library. It resolved itself here once Windows had

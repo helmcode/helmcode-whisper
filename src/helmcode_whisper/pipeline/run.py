@@ -5,6 +5,13 @@ starts. A crash in the merge does not re-run an hour of transcription, and a
 second `process` after a fixed template only pays for the notes. `--force`
 throws the cache away.
 
+The steps are ordered by what they need rather than by the order they appear in
+the output. Both tracks are prepared at once, and diarization — local, CPU-bound
+and by far the most expensive step — starts as soon as the system track is ready
+and runs underneath the transcription requests, which spend their time waiting
+on the network. Nothing downstream of the transcript can start early, so that
+overlap is where the wall clock is won.
+
 Step timings land in `meta.json`, which is where the numbers in the article come
 from — measured on the machine that ran it, not estimated.
 """
@@ -12,7 +19,10 @@ from — measured on the machine that ran it, not estimated.
 from __future__ import annotations
 
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -52,81 +62,77 @@ def run_process(
     console().print(Text(f"  {meeting.path}", style="tertiary"))
     console().print()
 
-    tracks = _present_tracks(meeting)
-    if not tracks:
+    sources = _present_tracks(meeting)
+    if not sources:
         raise RuntimeError(f"No audio files in {meeting.path}")
 
     with HelmcodeClient(config) as client:
-        # ── 1-2. prepare and plan ────────────────────────────────
+        # ── 1-2. prepare and plan, both tracks at once ───────────
         started = time.monotonic()
-        prepared: dict[str, Path] = {}
-        plans: dict[str, list[audio.Chunk]] = {}
-        prepare_hits = 0
-        for track, source in tracks.items():
-            target = meeting.cache_path("prepared", f"{track}-16k.wav")
-            if force and target.is_file():
-                target.unlink()
-            prepare_hits += 1 if target.is_file() else 0
-            prepared[track] = audio.prepare_track(source, target)
-            regions = audio.speech_regions(prepared[track])
-            plans[track] = audio.plan_chunks(regions)
-            speech = sum(end - begin for begin, end in regions)
+        with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+            tracks = list(
+                pool.map(
+                    lambda item: _prepare_track(meeting, item[0], item[1], force=force),
+                    sources.items(),
+                )
+            )
+        # Printed here rather than inside the workers: two threads writing to
+        # the same console interleave their lines.
+        for track in tracks:
             status_line(
-                "ok" if plans[track] else "warn",
-                f"{track:<7} {audio.track_duration(prepared[track]) / 60:.1f} min",
-                f"{speech / 60:.1f} min of speech in {len(plans[track])} chunks"
-                + ("" if plans[track] else " — this track will not be transcribed"),
+                "ok" if track.chunks else "warn",
+                f"{track.name:<7} {track.duration_seconds / 60:.1f} min",
+                f"{track.speech_seconds / 60:.1f} min of speech in {len(track.chunks)} chunks"
+                + ("" if track.chunks else " — this track will not be transcribed"),
             )
         timings["prepare"] = time.monotonic() - started
-        cached_steps["prepare"] = prepare_hits == len(tracks)
+        cached_steps["prepare"] = all(track.from_cache for track in tracks)
 
-        total_chunks = sum(len(chunks) for chunks in plans.values())
+        total_chunks = sum(len(track.chunks) for track in tracks)
         if not total_chunks:
             raise RuntimeError("No speech detected in the recording.")
 
-        # ── 3. transcribe ────────────────────────────────────────
+        # ── 3. diarize and transcribe, together ──────────────────
+        diarization = _Diarization(
+            meeting,
+            config,
+            next((track for track in tracks if track.name == "system"), None),
+            enabled=diarize_enabled,
+            force=force,
+        )
+        diarization.start()
+
         started = time.monotonic()
-        segments: dict[str, list[Segment]] = {}
-        detected_language = language
-        stt_cache_hits = 0
         with progress() as bar:
             task = bar.add_task("transcribing", total=total_chunks)
-            for track, chunks in plans.items():
-                track_segments, found, hits = stt.transcribe_track(
-                    client,
-                    meeting,
-                    track=track,
-                    prepared_wav=prepared[track],
-                    chunks=chunks,
-                    language=language,
-                    model=config.stt_model,
-                    force=force,
-                    on_chunk_done=lambda: bar.advance(task),
-                )
-                segments[track] = track_segments
-                detected_language = detected_language or found
-                stt_cache_hits += hits
+            transcription = stt.transcribe(
+                client,
+                meeting,
+                [track.plan for track in tracks],
+                language=language,
+                model=config.stt_model,
+                force=force,
+                concurrency=config.stt_concurrency,
+                on_chunk_done=lambda: bar.advance(task),
+            )
         timings["transcribe"] = time.monotonic() - started
-        cached_steps["transcribe"] = stt_cache_hits == total_chunks
+        cached_steps["transcribe"] = transcription.fully_cached
+
+        segments = transcription.segments
+        detected_language = transcription.language
         status_line(
             "ok",
             f"transcribed {sum(len(items) for items in segments.values())} segments",
             f"language {detected_language or 'unknown'}",
         )
 
-        # ── 4. diarize, locally ──────────────────────────────────
+        # ── 4. collect the diarization that has been running ─────
+        # This measures what diarization still costs the pipeline, which is what
+        # it had left to do when the last chunk came back — not what it cost in
+        # total. `_Diarization.seconds` records that separately, so meta.json
+        # keeps both and neither can be mistaken for the other.
         started = time.monotonic()
-        diarized = False
-        device = None
-        cached_steps["diarize"] = False
-        if diarize_enabled and "system" in segments and segments["system"]:
-            diarized, device, cached_steps["diarize"] = _diarize_system_track(
-                meeting, config, prepared["system"], segments["system"], force=force
-            )
-        elif diarize_enabled:
-            status_line("skip", "diarization skipped", "no system track to separate")
-        else:
-            status_line("skip", "diarization disabled", "--no-diarize")
+        diarized, device, cached_steps["diarize"] = diarization.apply(segments.get("system") or [])
         timings["diarize"] = time.monotonic() - started
 
         # ── 5. merge ─────────────────────────────────────────────
@@ -206,8 +212,13 @@ def run_process(
     run_record = {
         "processed_at": datetime.now().isoformat(timespec="seconds"),
         "timings_seconds": {key: round(value, 2) for key, value in timings.items()},
+        # What diarization cost on its own, as opposed to what it cost the
+        # pipeline after overlapping with transcription. The gap between this
+        # and timings_seconds["diarize"] is what the overlap saved.
+        "diarization_seconds": round(diarization.seconds, 2),
         "from_cache": cached_steps,
-        "chunks": {track: len(chunks) for track, chunks in plans.items()},
+        "chunks": {track.name: len(track.chunks) for track in tracks},
+        "stt_concurrency": config.stt_concurrency,
         "notes_tokens": {
             "prompt": note_stats.get("prompt_tokens", 0),
             "completion": note_stats.get("completion_tokens", 0),
@@ -231,6 +242,26 @@ def run_process(
     _print_summary(meeting, note_data, timings)
 
 
+# ── preparation ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _Track:
+    """A prepared track and everything later steps need to know about it."""
+
+    name: str
+    path: Path
+    fingerprint: str
+    chunks: list[audio.Chunk]
+    duration_seconds: float
+    speech_seconds: float
+    from_cache: bool
+
+    @property
+    def plan(self) -> stt.TrackPlan:
+        return stt.TrackPlan(self.name, self.path, self.fingerprint, self.chunks)
+
+
 def _present_tracks(meeting: Meeting) -> dict[str, Path]:
     tracks: dict[str, Path] = {}
     if meeting.mic_wav.is_file() and meeting.mic_wav.stat().st_size > 44:
@@ -240,60 +271,219 @@ def _present_tracks(meeting: Meeting) -> dict[str, Path]:
     return tracks
 
 
-def _diarize_system_track(
-    meeting: Meeting,
-    config: Config,
-    prepared: Path,
-    segments: list[Segment],
-    *,
-    force: bool,
-) -> tuple[bool, str | None, bool]:
-    """Returns (diarized, device, came_from_cache)."""
-    fingerprint = file_fingerprint(prepared)
-    cache_key = f"diarization-{fingerprint}.json"
-    cached = None if force else meeting.read_cached_json(cache_key)
+def _prepare_track(meeting: Meeting, name: str, source: Path, *, force: bool) -> _Track:
+    """Resample one track and work out where to cut it. Runs off the main thread.
 
+    The chunk plan is cached alongside the prepared audio. It is a deterministic
+    function of that audio, and recomputing it means reading the whole track
+    back and running voice activity detection over every 30 ms of it — a few
+    seconds per hour of recording, paid on every run including the ones that
+    have nothing else left to do.
+    """
+    target = meeting.cache_path("prepared", f"{name}-16k.wav")
+    if force and target.is_file():
+        target.unlink()
+    was_prepared = target.is_file()
+    audio.prepare_track(source, target)
+
+    # One hash of the prepared track, shared by the chunk encoder, the
+    # transcription cache and the diarization cache. It used to be computed
+    # separately by each of them, which is three passes over ~115 MB per track.
+    fingerprint = file_fingerprint(target)
+
+    cache_key = f"plan-{name}-{fingerprint}.json"
+    cached = None if force else meeting.read_cached_json(cache_key)
     if cached:
-        turns = [diarize.Turn(**turn) for turn in cached["turns"]]
-        device = cached.get("device")
-        status_line("skip", f"diarization from cache ({len(turns)} turns)")
-    else:
+        return _Track(
+            name=name,
+            path=target,
+            fingerprint=fingerprint,
+            chunks=[audio.Chunk(**chunk) for chunk in cached["chunks"]],
+            duration_seconds=cached["duration_seconds"],
+            speech_seconds=cached["speech_seconds"],
+            from_cache=was_prepared,
+        )
+
+    regions = audio.speech_regions(target)
+    track = _Track(
+        name=name,
+        path=target,
+        fingerprint=fingerprint,
+        chunks=audio.plan_chunks(regions),
+        duration_seconds=audio.track_duration(target),
+        speech_seconds=sum(end - begin for begin, end in regions),
+        from_cache=was_prepared,
+    )
+    meeting.write_cached_json(
+        {
+            "chunks": [chunk.__dict__ for chunk in track.chunks],
+            "duration_seconds": track.duration_seconds,
+            "speech_seconds": track.speech_seconds,
+        },
+        cache_key,
+    )
+    return track
+
+
+# ── diarization, in the background ───────────────────────────────
+
+
+@dataclass
+class _DiarizationOutcome:
+    turns: list[diarize.Turn] | None = None
+    device: str | None = None
+    from_cache: bool = False
+    # Why there are no turns, and how loudly to say so. A missing pyannote is
+    # an expected configuration; pyannote blowing up halfway through is not.
+    problem: str | None = None
+    level: str = "skip"
+    seconds: float = 0.0
+    details: list[str] = field(default_factory=list)
+
+
+class _Diarization:
+    """Speaker turns for the system track, computed while transcription runs.
+
+    Diarization needs the prepared system audio and nothing else. It does not
+    need the transcript, which is the only reason it can start this early — and
+    it should, because it is local CPU work competing with a step that is almost
+    entirely idle waiting on HTTP. On the first real recording it was 46 s of a
+    70 s run.
+
+    The worker never prints and never touches shared state: everything it learns
+    comes back through `_DiarizationOutcome`, and `apply` reports it from the
+    main thread once the progress bar is gone.
+
+    It is a daemon thread rather than a pool because of what happens when
+    something upstream fails. If transcription raises — an expired key, a
+    network that went away — nothing ever collects this result, and a
+    non-daemon worker holds the interpreter open until it finishes: the user
+    reads their error message and then watches the command hang for as long as
+    diarization takes, which on a 60-minute meeting is half an hour. A daemon
+    thread is abandoned at exit, which is the right answer for work whose
+    output nobody is going to read.
+    """
+
+    def __init__(
+        self,
+        meeting: Meeting,
+        config: Config,
+        track: _Track | None,
+        *,
+        enabled: bool,
+        force: bool,
+    ) -> None:
+        self._meeting = meeting
+        self._config = config
+        self._track = track
+        self._force = force
+        self._thread: threading.Thread | None = None
+        self._outcome = _DiarizationOutcome()
+        self.seconds = 0.0
+
+        self._skip: str | None = None
+        if not enabled:
+            self._skip = "--no-diarize"
+        elif track is None:
+            self._skip = "no system track to separate"
+        elif not track.chunks:
+            self._skip = "no speech on the system track"
+
+    def start(self) -> None:
+        if self._skip is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="diarize", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        # Timed out here, around everything the thread does, so that it is
+        # directly comparable with how long the main thread waited. Timing only
+        # the pyannote call would leave the import — torch is seconds on its
+        # own — outside the number, and `diarization_seconds` minus the wait
+        # would come out negative on a short meeting.
+        began = time.monotonic()
+        try:
+            outcome = self._work()
+        except BaseException as exc:  # noqa: BLE001 — reported, never raised here
+            outcome = _DiarizationOutcome(problem=f"{type(exc).__name__}: {exc}", level="warn")
+        outcome.seconds = time.monotonic() - began
+        self._outcome = outcome
+
+    def _work(self) -> _DiarizationOutcome:
+        assert self._track is not None
+        cache_key = f"diarization-{self._track.fingerprint}.json"
+        cached = None if self._force else self._meeting.read_cached_json(cache_key)
+        if cached:
+            return _DiarizationOutcome(
+                turns=[diarize.Turn(**turn) for turn in cached["turns"]],
+                device=cached.get("device"),
+                from_cache=True,
+            )
+
         usable, reason = diarize.availability()
         if not usable:
-            status_line(
-                "skip",
-                "diarization unavailable — keeping the me/others split",
-                reason or "",
-            )
-            return False, None, False
-        console().print(
-            Text("  diarizing locally — this runs on CPU and takes a while", style="tertiary")
-        )
+            return _DiarizationOutcome(problem=reason or "pyannote is unavailable")
+
         try:
-            turns, device = diarize.diarize(prepared, config.hf_token)
+            turns, device = diarize.diarize(self._track.path, self._config.hf_token)
         except diarize.DiarizationUnavailable as exc:
-            status_line("skip", "diarization skipped", str(exc))
-            return False, None, False
+            return _DiarizationOutcome(problem=str(exc))
         except Exception as exc:
             # Diarization is the optional step. Whatever pyannote, torch or a
             # model download does in there, the meeting still has a transcript
             # and notes waiting on the other side of it.
-            status_line("warn", f"diarization failed: {type(exc).__name__}: {exc}")
-            status_line("skip", "keeping the me/others split")
-            return False, None, False
-        meeting.write_cached_json(
+            return _DiarizationOutcome(problem=f"{type(exc).__name__}: {exc}", level="warn")
+
+        self._meeting.write_cached_json(
             {"turns": [turn.__dict__ for turn in turns], "device": device}, cache_key
         )
-        status_line("ok", f"diarization  {len(turns)} turns on {device}")
+        return _DiarizationOutcome(turns=turns, device=device)
 
-    # Split first, then label: cutting on word timestamps is what lets a segment
-    # containing two people become two segments instead of one wrong label.
-    refined = diarize.split_by_speaker(segments, turns)
-    for segment, label in zip(refined, diarize.label_segments(refined, turns), strict=True):
-        segment.speaker = label
+    def apply(self, segments: list[Segment]) -> tuple[bool, str | None, bool]:
+        """Wait for the turns and label the segments. (diarized, device, cached)."""
+        if self._skip is not None:
+            status_line("skip", "diarization skipped", self._skip)
+            return False, None, False
 
-    segments[:] = refined
-    return True, device, bool(cached)
+        assert self._thread is not None
+        self._thread.join()
+        outcome = self._outcome
+        self.seconds = outcome.seconds
+
+        if outcome.turns is None:
+            if outcome.level == "warn":
+                status_line("warn", f"diarization failed: {outcome.problem}")
+            status_line("skip", "diarization unavailable — keeping the me/others split",
+                        outcome.problem or "")
+            return False, None, False
+
+        if not segments:
+            status_line("skip", "diarization skipped", "the system track transcribed to nothing")
+            return False, None, outcome.from_cache
+
+        if outcome.from_cache:
+            status_line("skip", f"diarization from cache ({len(outcome.turns)} turns)")
+        else:
+            status_line(
+                "ok",
+                f"diarization  {len(outcome.turns)} turns on {outcome.device}",
+                f"{outcome.seconds:.0f}s, alongside transcription",
+            )
+
+        # Split first, then label: cutting on word timestamps is what lets a
+        # segment containing two people become two segments instead of one
+        # wrong label.
+        refined = diarize.split_by_speaker(segments, outcome.turns)
+        for segment, label in zip(
+            refined, diarize.label_segments(refined, outcome.turns), strict=True
+        ):
+            segment.speaker = label
+
+        segments[:] = refined
+        return True, outcome.device, outcome.from_cache
+
+
+# ── indexing and output ──────────────────────────────────────────
 
 
 def _index_meeting(

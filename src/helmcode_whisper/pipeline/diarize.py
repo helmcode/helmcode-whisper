@@ -21,6 +21,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from .intervals import IntervalIndex
+
 
 @contextmanager
 def _quiet_import():
@@ -78,10 +80,29 @@ def availability() -> tuple[bool, str | None]:
     try:
         with _quiet_import():
             import pyannote.audio  # noqa: F401
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        # "No module named 'pyannote'" means it was never installed. The same
+        # exception naming any other module means pyannote is here and one of
+        # the things it imports is not — a different problem with a different
+        # fix, and telling someone to install what they already have is the
+        # least useful thing this function could do.
+        if (exc.name or "").partition(".")[0] == "pyannote":
+            return False, (
+                "pyannote is not installed. Install it with "
+                "`uv pip install 'helmcode-whisper[diarize]'`, or keep the me/others split."
+            )
         return False, (
-            "pyannote is not installed. Install it with "
-            "`uv pip install 'helmcode-whisper[diarize]'`, or keep the me/others split."
+            f"pyannote is installed but {exc.name} is missing. Reinstall the extra with "
+            "`uv pip install --reinstall 'helmcode-whisper[diarize]'`."
+        )
+    except ImportError as exc:
+        # An ImportError that is not a missing module is a version mismatch:
+        # pyannote reaching for a symbol the installed torch does not export,
+        # or torch failing to import itself after a partial in-place upgrade.
+        return False, (
+            f"pyannote is installed but will not import: {exc}. This is usually a torch "
+            "version mismatch — reinstall the extra with "
+            "`uv pip install --reinstall 'helmcode-whisper[diarize]'`."
         )
     except Exception as exc:
         return False, f"pyannote is installed but will not load: {type(exc).__name__}: {exc}"
@@ -132,13 +153,9 @@ def diarize(wav_path: Path, hf_token: str | None) -> tuple[list[Turn], str]:
 
     if pipeline is None:
         raise DiarizationUnavailable(
-            "pyannote's from_pretrained rejected both token arguments: " + "; ".join(errors)
-        )
-
-    if pipeline is None:
-        raise DiarizationUnavailable(
-            "pyannote returned no pipeline — the token is probably not authorized "
-            "for pyannote/speaker-diarization-3.1."
+            "pyannote's from_pretrained rejected both token arguments, so either the token "
+            "is not authorized for pyannote/speaker-diarization-3.1 or this version takes a "
+            "third name for it: " + "; ".join(errors)
         )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -204,6 +221,7 @@ def split_by_speaker(segments: list, turns: list[Turn]) -> list:
     """
     from .model import Segment
 
+    index = IntervalIndex(turns)
     refined: list = []
     for segment in segments:
         words = segment.words
@@ -213,7 +231,8 @@ def split_by_speaker(segments: list, turns: list[Turn]) -> list:
 
         groups: list[tuple[str, list]] = []
         for word in words:
-            speaker = _speaker_at((word.start + word.end) / 2, turns) or segment.speaker
+            turn = index.covering((word.start + word.end) / 2)
+            speaker = turn.speaker if turn else segment.speaker
             if groups and groups[-1][0] == speaker:
                 groups[-1][1].append(word)
             else:
@@ -274,15 +293,6 @@ def _absorb_short_groups(groups: list[tuple[str, list]]) -> list[tuple[str, list
     return groups
 
 
-def _speaker_at(when: float, turns: list[Turn]) -> str | None:
-    for turn in turns:
-        if turn.start <= when <= turn.end:
-            return turn.speaker
-        if turn.start > when:
-            break
-    return None
-
-
 def label_segments(segments, turns: list[Turn]) -> list[str]:
     """Give each transcript segment the speaker it overlaps with the most.
 
@@ -291,13 +301,12 @@ def label_segments(segments, turns: list[Turn]) -> list[str]:
     A segment that matches nothing keeps whatever it came in with — that happens
     on very short interjections, where guessing is worse than abstaining.
     """
+    index = IntervalIndex(turns)
     labels: list[str] = []
     for segment in segments:
         best_speaker = segment.speaker
         best_overlap = 0.0
-        for turn in turns:
-            if turn.start >= segment.end:
-                break
+        for turn in index.overlapping(segment.start, segment.end):
             overlap = min(segment.end, turn.end) - max(segment.start, turn.start)
             if overlap > best_overlap:
                 best_overlap, best_speaker = overlap, turn.speaker

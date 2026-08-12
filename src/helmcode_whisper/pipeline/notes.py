@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,9 @@ _STRUCTURED_MODES = ("json_schema", "json_object", "plain")
 # single-pass path covers the common case.
 MAP_REDUCE_THRESHOLD = 120_000
 _BLOCK_CHARS = 60_000
+# Block summaries in flight at once. Smaller than the transcription pool: these
+# are long generations rather than short ones, and there are only ever a handful.
+_BLOCK_CONCURRENCY = 3
 
 NOTES_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -139,13 +144,26 @@ def generate_notes(
         return notes, stats
 
     blocks = _split_transcript(text, _BLOCK_CHARS)
-    partials: list[dict[str, Any]] = []
     total_stats = {"prompt_tokens": 0, "completion_tokens": 0, "requests": 0, "mode": None}
-    for index, block in enumerate(blocks, start=1):
+    memo = _ModeMemo()
+
+    def summarize_block(numbered: tuple[int, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+        position, block = numbered
         block_context = dict(context)
-        block_context["TITLE"] = f"{title} (part {index} of {len(blocks)})"
-        notes, stats = _complete(client, render_prompt(template, block, block_context), model=model)
-        partials.append(notes)
+        block_context["TITLE"] = f"{title} (part {position} of {len(blocks)})"
+        return _complete(
+            client, render_prompt(template, block, block_context), model=model, memo=memo
+        )
+
+    # The blocks do not depend on each other — each one summarizes its own slice
+    # and only the final pass sees them together — so they go out concurrently.
+    # Sequentially this step is one full round trip per block, and it only runs
+    # at all on transcripts long enough that there are several of them.
+    with ThreadPoolExecutor(max_workers=min(_BLOCK_CONCURRENCY, len(blocks))) as pool:
+        results = list(pool.map(summarize_block, enumerate(blocks, start=1)))
+
+    partials = [notes for notes, _ in results]
+    for _, stats in results:
         _accumulate(total_stats, stats)
 
     merged = _merge_partials(partials)
@@ -155,17 +173,44 @@ def generate_notes(
         "\n\n".join(f"Part {i}: {part.get('summary', '')}" for i, part in enumerate(partials, 1)),
         context,
     )
-    final, stats = _complete(client, summary_prompt, model=model)
+    final, stats = _complete(client, summary_prompt, model=model, memo=memo)
     _accumulate(total_stats, stats)
     merged["summary"] = final.get("summary") or merged["summary"]
     return merged, total_stats
 
 
+class _ModeMemo:
+    """The structured-output mode that has already worked, within one run.
+
+    The ladder exists because the API documents `json_schema` as validated on
+    other models than this one. When it works — which is what every measured
+    run has shown — there is nothing to remember. When it does not, this is
+    what stops each of a long transcript's blocks paying separately for the
+    same two rejected requests.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._mode: str | None = None
+
+    def ladder(self) -> tuple[str, ...]:
+        with self._lock:
+            known = self._mode
+        if known is None:
+            return _STRUCTURED_MODES
+        return (known, *(mode for mode in _STRUCTURED_MODES if mode != known))
+
+    def worked(self, mode: str) -> None:
+        with self._lock:
+            self._mode = mode
+
+
 def _complete(
-    client: HelmcodeClient, prompt: str, *, model: str
+    client: HelmcodeClient, prompt: str, *, model: str, memo: _ModeMemo | None = None
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    memo = memo or _ModeMemo()
     last_error: Exception | None = None
-    for mode in _STRUCTURED_MODES:
+    for mode in memo.ladder():
         response_format: dict[str, Any] | None = None
         if mode == "json_schema":
             response_format = {
@@ -195,6 +240,7 @@ def _complete(
             last_error = exc
             continue
 
+        memo.worked(mode)
         usage = payload.get("usage") or {}
         return notes, {
             "mode": mode,

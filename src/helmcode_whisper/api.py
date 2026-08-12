@@ -59,11 +59,12 @@ class HelmcodeClient:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         last_error: Exception | None = None
+        response: httpx.Response | None = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 response = self._client.request(method, path, **kwargs)
             except httpx.TransportError as exc:  # network hiccup, DNS, timeout
-                last_error = exc
+                response, last_error = None, exc
             else:
                 if response.status_code < 400:
                     return response.json()
@@ -72,10 +73,9 @@ class HelmcodeClient:
                 last_error = ApiError(_describe(response))
 
             if attempt < _MAX_ATTEMPTS - 1:
-                # Plain exponential backoff: 1s, 2s, 4s. The failure mode we
-                # actually hit is a burst of concurrent chunk uploads, and the
-                # concurrency cap already keeps that burst small.
-                time.sleep(2**attempt)
+                # Exponential backoff: 1s, 2s, 4s — unless the server said how
+                # long to wait, in which case it knows better than we do.
+                time.sleep(_retry_after(response) or 2**attempt)
 
         raise ApiError(f"{path} failed after {_MAX_ATTEMPTS} attempts: {last_error}")
 
@@ -163,10 +163,31 @@ class HelmcodeClient:
         return result.get("results", result.get("data", []))
 
 
+def _retry_after(response: httpx.Response | None) -> float | None:
+    """The server's own answer to "when should I come back", in seconds."""
+    if response is None:
+        return None
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:  # the date form is legal too, and not worth parsing for this
+        return max(0.0, min(float(raw), 60.0))
+    except ValueError:
+        return None
+
+
 def _describe(response: httpx.Response) -> str:
     try:
         body = response.json()
         message = body.get("error", {}).get("message") or body.get("message") or str(body)
     except ValueError:
         message = response.text[:400]
+
+    if response.status_code == 429 and "max_parallel_requests" in str(message):
+        # The one rate limit this tool can actually walk into: `process` sends
+        # chunks concurrently, and the key allows five at a time.
+        message = (
+            f"{message} — lower HCW_STT_CONCURRENCY (see .env.example); "
+            "the default of 4 stays under this limit."
+        )
     return f"HTTP {response.status_code}: {message}"

@@ -152,10 +152,19 @@ def speech_regions(path16k: Path) -> list[tuple[float, float]]:
     vad = webrtcvad.Vad(_VAD_AGGRESSIVENESS)
     frame_length = int(SAMPLE_RATE * _VAD_FRAME_MS / 1000)
     frame_count = len(audio) // frame_length
-    raw = audio[: frame_count * frame_length].reshape(frame_count, frame_length)
+
+    # Convert the whole track to bytes once and hand webrtcvad slices of it.
+    # An hour of audio is 120,000 frames, and calling `.tobytes()` on each row
+    # of a reshaped array allocates 120,000 buffers to say what slicing an
+    # existing `bytes` says for free.
+    raw = audio[: frame_count * frame_length].tobytes()
+    stride = frame_length * audio.itemsize
 
     flags = np.fromiter(
-        (vad.is_speech(frame.tobytes(), SAMPLE_RATE) for frame in raw),
+        (
+            vad.is_speech(raw[offset : offset + stride], SAMPLE_RATE)
+            for offset in range(0, frame_count * stride, stride)
+        ),
         dtype=bool,
         count=frame_count,
     )

@@ -148,7 +148,11 @@ def index_meeting(
         for offset in range(0, len(passages), EMBED_BATCH):
             batch = passages[offset : offset + EMBED_BATCH]
             vectors = client.embed([item.text for item in batch], model=embed_model)
-            for passage_id, vector in zip(passage_ids[offset:], vectors, strict=False):
+            # strict: a batch that comes back short would otherwise pair the
+            # wrong vector with the rest of the passages from here on, and every
+            # search after it would quietly return the wrong moment.
+            batch_ids = passage_ids[offset : offset + len(batch)]
+            for passage_id, vector in zip(batch_ids, vectors, strict=True):
                 array = _normalize(np.asarray(vector, dtype=np.float32))
                 connection.execute(
                     "INSERT OR REPLACE INTO vectors (passage_id, dim, vec) VALUES (?, ?, ?)",

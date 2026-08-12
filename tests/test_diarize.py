@@ -44,12 +44,40 @@ def pyannote_raises(monkeypatch):
 
 
 def test_missing_pyannote_is_reported_not_raised(pyannote_raises) -> None:
-    pyannote_raises(ImportError("No module named 'pyannote'"))
+    pyannote_raises(ModuleNotFoundError("No module named 'pyannote'", name="pyannote"))
 
     usable, reason = diarize.availability()
 
     assert usable is False
     assert "not installed" in reason
+
+
+def test_a_broken_install_is_not_reported_as_a_missing_one(pyannote_raises) -> None:
+    """The failure this machine actually produces.
+
+    torch upgraded in place leaves pyannote importing a symbol its installed
+    torch no longer exports. That is an ImportError but not a missing module,
+    and answering it with "pyannote is not installed" sends the user to
+    reinstall something they already have.
+    """
+    pyannote_raises(
+        ImportError("cannot import name 'NP_SUPPORTED_MODULES' from 'torch._dynamo.utils'")
+    )
+
+    usable, reason = diarize.availability()
+
+    assert usable is False
+    assert "not installed" not in reason
+    assert "version mismatch" in reason
+
+
+def test_a_missing_dependency_names_the_dependency(pyannote_raises) -> None:
+    pyannote_raises(ModuleNotFoundError("No module named 'torch'", name="torch"))
+
+    usable, reason = diarize.availability()
+
+    assert usable is False
+    assert "torch is missing" in reason
 
 
 def test_a_blocked_native_library_is_also_survivable(pyannote_raises) -> None:
@@ -69,7 +97,13 @@ def test_diarize_raises_its_own_error_so_process_can_carry_on(pyannote_raises) -
         diarize.diarize(Path("nonexistent.wav"), "hf_token")
 
 
-def test_a_missing_token_is_caught_before_any_download() -> None:
+def test_a_missing_token_is_caught_before_any_download(monkeypatch) -> None:
+    # Pin availability rather than relying on this machine having a working
+    # pyannote: the assertion is about the token check, and letting the
+    # environment decide whether the test runs at all makes it useless in CI,
+    # where pyannote is deliberately not installed.
+    monkeypatch.setattr(diarize, "availability", lambda: (True, None))
+
     with pytest.raises(diarize.DiarizationUnavailable, match="HF_TOKEN"):
         diarize.diarize(Path("nonexistent.wav"), None)
 

@@ -11,5 +11,6 @@ build/
 *.wav
 *.ogg
 
-# Internal measurements for the article — never published.
+# Internal working documents for the article — never published.
 NUMBERS.md
+PLAN.md

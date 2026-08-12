@@ -147,7 +147,14 @@ def _vector_search(
         vector = vector / norm
 
     scores = matrix @ vector
-    top = np.argsort(scores)[::-1][:VECTOR_RECALL]
+    # Only the top slice is needed, so partition rather than sort: a full sort
+    # of every passage ever recorded to look at fifty of them is work that grows
+    # with the archive for no benefit.
+    if scores.size > VECTOR_RECALL:
+        candidates = np.argpartition(-scores, VECTOR_RECALL)[:VECTOR_RECALL]
+    else:
+        candidates = np.arange(scores.size)
+    top = candidates[np.argsort(-scores[candidates])]
     return _hydrate(connection, [(ids[i], float(scores[i]), "vector") for i in top])
 
 
