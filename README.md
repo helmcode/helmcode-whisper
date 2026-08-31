@@ -476,16 +476,24 @@ Then, once:
    fails". Accept all three and it works.
 2. Put a Hugging Face token in `.env` as `HF_TOKEN`.
 
-On CPU it's the slowest step in the pipeline by a wide margin: 89 s for a
-3-minute track, which is about half of real time, so a 60-minute meeting is
-half an hour of waiting. That is why it starts early and runs while the
-transcription requests are in flight.
+It is the slowest step in the pipeline by a wide margin, and how slow depends
+entirely on that flag above. The same 3-minute two-speaker track, same machine,
+same pyannote 3.1:
 
-The overlap used to make it nearly free, and it does not any more. It was
-written when transcription was the slow half; now that 90 minutes of audio comes
-back in 73 seconds, transcription is never the slower of the two and the overlap
-hides seconds rather than minutes. What actually fixes this is the paragraph
-above about the GPU.
+| device | time | speed | result |
+|---|---|---|---|
+| CPU, 15 threads | 110.3 s | 1.6x real time | 42 turns, 2 speakers |
+| GTX 1660 Ti | 16.1 s | 11.2x real time | 42 turns, 2 speakers |
+
+Identical output, 6.9x apart. Extrapolated to an hour of continuous speech that
+is 37 minutes against 5. A track with ordinary silence in it comes out faster
+than both, since silence is still audio pyannote has to read.
+
+It starts early and runs while the transcription requests are in flight, which
+used to make it nearly free. That is no longer true, and it is worth saying so
+plainly: the overlap was written when transcription was the slow half, and now
+that 90 minutes of audio comes back in 73 seconds, transcription is never the
+slower of the two. The overlap hides seconds. The GPU hides minutes.
 
 Skip it with `--no-diarize` and you still get the me/others split, which is
 often enough for a two-party call.
