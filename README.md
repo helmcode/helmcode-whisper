@@ -248,7 +248,7 @@ flowchart TB
     subgraph proc["hcw process"]
         MICWAV --> PREP["resample 16 kHz mono<br/>+ loudness normalize"]
         SYSWAV --> PREP
-        PREP --> VAD["VAD chunking<br/>≤110 s on silence boundaries"]
+        PREP --> VAD["VAD chunking<br/>≤8 min on silence boundaries"]
         VAD --> OPUS["Opus 24 kbps chunks"]
         OPUS --> STT["Whisper<br/>4 concurrent requests<br/>both tracks, one pool"]
         PREP --> DIA["pyannote<br/>LOCAL, CPU or local GPU<br/>runs alongside Whisper"]
@@ -275,18 +275,40 @@ package.
 solves half of diarization for free: near versus far is decided by which file
 the audio is in, and pyannote only has to untangle the remote side.
 
-**Chunking is load-bearing, not an optimization.** The transcription endpoint
-caps a request at 25 MB and about two minutes of audio. A 60-minute meeting is
-therefore ~35 chunks per track, ~70 requests. Chunks are cut on silence found by
-VAD so sentences survive; long silences fall outside every chunk and are never
-uploaded; and only when speech runs unbroken past the limit is a cut forced,
-with 2 s of overlap so the model has context on both sides. Requests run four at
-a time through a single pool covering both tracks. One after another, `process`
-would take longer than the meeting did, and a pool per track would leave the
-microphone waiting for the system audio to finish. Four rather than more
-because the API allows five parallel requests per key and 429s the sixth;
-`HCW_STT_CONCURRENCY` is there if your key says otherwise. On an 11-chunk
-recording, one at a time took 22 s and four at a time took 2-3 s.
+**Chunking outlived the limit that caused it.** It started as a workaround: the
+endpoint used to cap a request at about two minutes of audio and answer anything
+longer with a 524. That cap is gone. Posting Opus straight at the endpoint, one
+request at a time:
+
+| audio | size | result | time |
+|---|---|---|---|
+| 2 min | 0.36 MB | 200 | 3.6 s |
+| 8 min | 1.43 MB | 200 | 7.3 s |
+| 30 min | 5.37 MB | 200 | 22.5 s |
+| 60 min | 10.73 MB | 200 | 42.6 s |
+| 90 min | 16.10 MB | 200 | 73.5 s |
+
+Ninety minutes in one request, with word timestamps intact to the last second.
+So chunks are now eight minutes rather than 110 seconds, and a 60-minute meeting
+is about 8 per track instead of 35.
+
+They are still chunks, because the mechanism was never really about the cap.
+Long silences fall outside every chunk and are never uploaded. Each chunk's
+result is cached on its own, so a failure downstream costs one piece instead of
+the hour. The progress bar has something to count. And going all the way to one
+request per track would cost something real: Whisper detects a language per
+request, so a single request forces one language on the whole meeting, while a
+smaller chunk at least confines the damage. Eight minutes is where those pull
+against each other about evenly.
+
+Chunks are still cut on silence found by VAD so sentences survive, and only when
+speech runs unbroken past the limit is a cut forced, with 2 s of overlap so the
+model has context on both sides. Requests run four at a time through a single
+pool covering both tracks: a pool per track would leave the microphone waiting
+for the system audio to finish. Four rather than more because the API allows
+five parallel requests per key and 429s the sixth; `HCW_STT_CONCURRENCY` is
+there if your key says otherwise. On an 11-chunk recording, one at a time took
+22 s and four at a time took 2-3 s.
 
 **Diarization runs underneath transcription.** It needs the prepared system
 track and nothing else, not even the transcript, so it starts as soon as that
@@ -470,8 +492,10 @@ else was hammering the disk.
 **Ctrl+C during `record` doesn't stop it immediately.** It finishes flushing
 the current buffer first. Give it a second; the WAV is closed cleanly.
 
-**`524` from the transcription endpoint.** A chunk was too long for the
-endpoint. Should not happen with the default limits; if it does, open an issue
+**`524` from the transcription endpoint.** A chunk took longer than whatever
+sits in front of the model. Ninety minutes in one request was measured working,
+so the eight-minute default has a wide margin, but a slower endpoint would move
+that line: lower `MAX_CHUNK_SECONDS` in `pipeline/audio.py` and open an issue
 with the `chunks` block from `meta.json`.
 
 ## Other things that bite

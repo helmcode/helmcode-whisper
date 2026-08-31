@@ -20,8 +20,9 @@ import httpx
 
 from .config import Config
 
-# The API times out audio requests around the two-minute mark; give a chunked
-# upload generous room before we call it a failure ourselves.
+# Audio requests are the long ones: 90 minutes of Opus came back in 74 s when
+# this was measured, so 300 s leaves a wide margin for a slower day without
+# letting a genuinely hung request sit forever.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=10.0)
 
 _RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504, 524}
@@ -94,8 +95,9 @@ class HelmcodeClient:
     ) -> dict[str, Any]:
         """POST /audio/transcriptions with per-segment timestamps.
 
-        The endpoint caps requests at 25 MB and roughly two minutes of audio, so
-        callers must hand it pre-split chunks; see `pipeline.audio`.
+        The 25 MB request cap is the only hard limit left; the two-minute one
+        is gone. Callers still hand it chunks, for the reasons in
+        `pipeline.audio`.
         """
         # Both granularities in one request: `segments` gives sentence-shaped
         # text and `words` gives the boundaries needed to cut a segment where

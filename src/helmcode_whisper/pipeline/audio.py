@@ -1,9 +1,20 @@
 """Audio preparation: normalize, find speech, and cut chunks the API will accept.
 
-The Helmcode transcription endpoint caps a request at 25 MB and around two
-minutes of audio; anything longer comes back as a 524. So the real work here is
-deciding *where* to cut a 60-minute recording into ~35 pieces without slicing
-through the middle of a sentence.
+Chunking started as a workaround: the transcription endpoint capped a request
+at around two minutes of audio and answered anything longer with a 524. That cap
+is gone. Measured against the live endpoint, one request carried 90 minutes of
+Opus (16 MB) and came back in 74 s with word timestamps intact to the last
+second, so the size below is chosen rather than forced.
+
+The mechanism stays, because what it buys was never really about the cap. Long
+silences fall outside every chunk and are never uploaded, each chunk's result is
+cached on its own so a failure downstream costs one piece instead of the hour,
+and the progress bar has something to count. What it costs is that Whisper
+detects a language per request, so a chunk wants to be as large as the pipeline
+can comfortably retry, not as small as the endpoint will tolerate.
+
+Either way the real work here is deciding *where* to cut without slicing through
+the middle of a sentence.
 
 The answer is voice activity detection. webrtcvad marks 30 ms frames as speech
 or not; adjacent speech is merged, short gaps are bridged, and chunks are packed
@@ -29,9 +40,18 @@ import soundfile as sf
 # resample at the top of the pipeline serves both.
 SAMPLE_RATE = 16_000
 
-# The endpoint's limit is ~120 s. Stopping at 110 leaves room for the encoder's
-# rounding and for a chunk that ends on a long word.
-MAX_CHUNK_SECONDS = 110.0
+# Eight minutes, and this one is a judgement rather than a constraint. It was
+# 110 s when the endpoint refused anything longer than two minutes; with 90
+# minutes in a single request now measured working, the trade-offs moved. At
+# eight minutes a 60-minute meeting is ~8 chunks a track instead of ~35, Whisper
+# picks a language 8 times instead of 35 (which is what makes a code-switching
+# meeting come back part-translated, see the README), and a chunk that fails
+# costs eight minutes of re-transcription rather than an hour. Opus at 24 kbps
+# puts one at roughly 1.4 MB, nowhere near the 25 MB request cap.
+#
+# Bring it down if your endpoint is slower than this one: `api._TIMEOUT` allows
+# a single request 300 s to come back, and nothing here checks that for you.
+MAX_CHUNK_SECONDS = 480.0
 # Below this, a chunk costs a full request for almost no speech.
 MIN_CHUNK_SECONDS = 1.0
 # Speech separated by less than this is one utterance, not two.
@@ -113,7 +133,7 @@ def prepare_track(source: Path, destination: Path) -> Path:
 def encode_chunk(source16k: Path, chunk: Chunk, destination: Path) -> Path:
     """Cut one chunk out of the prepared track as Opus.
 
-    Opus at 24 kbps mono is about 360 KB for two minutes — two orders of
+    Opus at 24 kbps mono is about 1.4 MB for eight minutes, more than an order of
     magnitude under the 25 MB request limit, and small enough that upload time
     stops mattering next to inference time.
     """

@@ -18,9 +18,9 @@ DEFAULT_NOTES_MODEL = "deepseek-v4-flash"
 DEFAULT_EMBED_MODEL = "qwen3-embedding"
 DEFAULT_RERANK_MODEL = "rerank"
 
-# Transcription requests in flight at once, across both tracks. The endpoint
-# caps a request at ~2 minutes of audio, so an hour-long meeting is ~70 of them
-# and this number is most of what decides how long `process` takes.
+# Transcription requests in flight at once, across both tracks. At the current
+# chunk size an hour-long meeting is about 16 of them, so this decides less than
+# it used to, but it is still the difference between one wave and several.
 #
 # Four, because the API enforces `max_parallel_requests: 5` per key and answers
 # a sixth with a 429. Measured, not guessed: six produced

@@ -1,4 +1,4 @@
-"""Chunk planning — the step the API's two-minute limit makes load-bearing."""
+"""Chunk planning: where to cut, and what never gets uploaded."""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ def test_silence_between_regions_is_never_uploaded() -> None:
 
 
 def test_a_long_unbroken_region_is_cut_with_overlap() -> None:
-    regions = [(0.0, 300.0)]
+    # Comfortably past MAX_CHUNK_SECONDS, so the cut is forced whatever the
+    # ceiling is set to. At 300 s this test stopped proving anything the day the
+    # ceiling went from 110 s to 480.
+    regions = [(0.0, audio.MAX_CHUNK_SECONDS * 3)]
     chunks = audio.plan_chunks(regions)
 
     assert len(chunks) > 2

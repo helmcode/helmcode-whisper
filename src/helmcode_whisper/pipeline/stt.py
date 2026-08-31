@@ -1,8 +1,12 @@
 """Speech to text against the Helmcode Whisper endpoint.
 
-A 60-minute meeting is roughly 35 chunks per track, so 70 requests. Sending them
-one after another would make `process` take longer than the meeting did; sending
-all of them at once earns rate limits. A small fixed pool is the whole trick.
+A 60-minute meeting is roughly 8 chunks per track, so 16 requests. Sending them
+one after another wastes most of the wall clock waiting on HTTP; sending all of
+them at once earns rate limits. A small fixed pool is the whole trick.
+
+It used to be ~70 requests, back when the endpoint refused a chunk longer than
+two minutes. The pool mattered more then and it still pays for itself, because
+one request per track would leave the microphone waiting on the system audio.
 
 One pool, spanning both tracks. The obvious structure — transcribe the
 microphone, then transcribe the system audio, four at a time each — never puts
