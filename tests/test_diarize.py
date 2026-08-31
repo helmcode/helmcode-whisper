@@ -177,3 +177,98 @@ def test_a_segment_overlapping_nothing_keeps_its_label() -> None:
     segments = [Segment(100.0, 101.0, "suelto", "system", OTHERS)]
 
     assert diarize.label_segments(segments, turns) == [OTHERS]
+
+
+# ── which device diarization will actually use ────────────────────
+#
+# This is the check that would have caught the sample run in the README saying
+# "on cpu" on a machine with a CUDA GPU sitting idle.
+
+
+class _FakeTorch:
+    class cuda:  # noqa: N801 - mirroring torch's own lowercase namespace
+        _available = False
+        _name = "NVIDIA GeForce GTX 1660 Ti"
+
+        @classmethod
+        def is_available(cls) -> bool:
+            return cls._available
+
+        @classmethod
+        def get_device_name(cls, index: int) -> str:
+            return cls._name
+
+    class version:  # noqa: N801
+        cuda = None
+
+
+def _install_fake_torch(monkeypatch, *, cuda_available: bool, built_with_cuda: str | None):
+    import sys
+
+    fake = _FakeTorch
+    fake.cuda._available = cuda_available
+    fake.version.cuda = built_with_cuda
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    return fake
+
+
+def test_device_reports_cuda_when_torch_can_see_it(monkeypatch) -> None:
+    _install_fake_torch(monkeypatch, cuda_available=True, built_with_cuda="13.0")
+
+    where = diarize.device()
+
+    assert where is not None
+    assert where.name == "cuda"
+    assert "1660" in (where.gpu or "")
+    assert where.advice is None
+
+
+def test_a_cpu_only_torch_next_to_an_nvidia_gpu_says_what_to_do(monkeypatch) -> None:
+    """The Windows trap: PyPI's torch wheel has no CUDA, so the GPU goes unused."""
+    _install_fake_torch(monkeypatch, cuda_available=False, built_with_cuda=None)
+    monkeypatch.setattr(diarize, "_machine_has_an_nvidia_gpu", lambda: True)
+
+    where = diarize.device()
+
+    assert where is not None
+    assert where.name == "cpu"
+    assert where.advice is not None
+    assert "--torch-backend" in where.advice
+
+
+def test_cpu_without_a_gpu_is_not_a_problem_worth_mentioning(monkeypatch) -> None:
+    _install_fake_torch(monkeypatch, cuda_available=False, built_with_cuda=None)
+    monkeypatch.setattr(diarize, "_machine_has_an_nvidia_gpu", lambda: False)
+
+    where = diarize.device()
+
+    assert where is not None
+    assert where.name == "cpu"
+    assert where.advice is None
+
+
+def test_a_cuda_build_that_cannot_see_the_gpu_gets_no_wheel_advice(monkeypatch) -> None:
+    """torch has CUDA compiled in, so a missing GPU is a driver question."""
+    _install_fake_torch(monkeypatch, cuda_available=False, built_with_cuda="13.0")
+    monkeypatch.setattr(diarize, "_machine_has_an_nvidia_gpu", lambda: True)
+
+    where = diarize.device()
+
+    assert where is not None
+    assert where.name == "cpu"
+    assert where.advice is None
+
+
+def test_device_is_unknown_rather_than_fatal_when_torch_will_not_import(monkeypatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "torch":
+            raise OSError("[WinError 4551] Smart App Control blocked torch/lib/shm.dll")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    assert diarize.device() is None

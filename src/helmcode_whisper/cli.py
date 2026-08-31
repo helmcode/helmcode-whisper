@@ -155,7 +155,7 @@ def doctor() -> None:
                 )
 
     hairline("diarization")
-    from .pipeline.diarize import availability
+    from .pipeline.diarize import availability, device
 
     usable, reason = availability()
     status_line(
@@ -163,6 +163,17 @@ def doctor() -> None:
         "pyannote ready" if usable else "pyannote unavailable",
         reason or "",
     )
+    if usable:
+        # The device, because it is the difference between four minutes and half
+        # an hour on a 60-minute meeting, and because the wrong answer is the
+        # default on Windows.
+        where = device()
+        if where is None:
+            status_line("warn", "device  unknown", "torch would not import")
+        elif where.name == "cuda":
+            status_line("ok", "device  cuda", where.gpu or "")
+        else:
+            status_line("warn" if where.advice else "ok", "device  cpu", where.advice or "")
     status_line(
         "ok" if config.hf_token else "skip",
         f"hf token {'set' if config.hf_token else 'not set'}",

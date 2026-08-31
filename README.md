@@ -443,7 +443,24 @@ cache, so it costs one embedding call per meeting and nothing else.
 Optional, local, and off by default because it pulls in torch:
 
 ```bash
-uv pip install -e ".[diarize]"
+uv pip install -e ".[diarize]" --torch-backend=auto
+```
+
+**`--torch-backend=auto` is not optional on Windows, and it is the single
+biggest thing on this page.** PyPI's Windows wheel for torch is CPU-only: 122 MB
+against the 527 MB Linux build that carries CUDA. Install the extra without that
+flag on a machine with a perfectly good NVIDIA GPU and `torch.cuda.is_available()`
+comes back False, diarization runs on the CPU, and nothing tells you. The sample
+run further up this page says `on cpu` for exactly that reason, on a machine
+with a GTX 1660 Ti in it.
+
+`hcw doctor` now reports the device and says so when it finds a GPU the
+installed torch cannot use:
+
+```
+D I A R I Z A T I O N
+ + pyannote ready
+ + device  cuda  NVIDIA GeForce GTX 1660 Ti
 ```
 
 Then, once:
@@ -459,12 +476,19 @@ Then, once:
    fails". Accept all three and it works.
 2. Put a Hugging Face token in `.env` as `HF_TOKEN`.
 
-It uses a local CUDA GPU if you have one and CPU otherwise. On CPU it's the
-slowest step in the pipeline by a wide margin, which is why it starts early
-and runs while the transcription requests are in flight. On a meeting whose
-transcription takes longer than its diarization, it becomes free. Skip it with
-`--no-diarize` and you still get the me/others split, which is often enough for
-a two-party call.
+On CPU it's the slowest step in the pipeline by a wide margin: 89 s for a
+3-minute track, which is about half of real time, so a 60-minute meeting is
+half an hour of waiting. That is why it starts early and runs while the
+transcription requests are in flight.
+
+The overlap used to make it nearly free, and it does not any more. It was
+written when transcription was the slow half; now that 90 minutes of audio comes
+back in 73 seconds, transcription is never the slower of the two and the overlap
+hides seconds rather than minutes. What actually fixes this is the paragraph
+above about the GPU.
+
+Skip it with `--no-diarize` and you still get the me/others split, which is
+often enough for a two-party call.
 
 ---
 
@@ -511,7 +535,8 @@ up as whole passages in the wrong language rather than odd words.
 `torch._dynamo`".** That means pyannote is installed and its torch isn't
 usable, usually after torch was upgraded in place and left a half-matched tree
 behind.
-Reinstall the extra: `uv pip install --reinstall 'helmcode-whisper[diarize]'`.
+Reinstall the extra: `uv pip install --reinstall 'helmcode-whisper[diarize]'
+--torch-backend=auto`.
 Until then `process` keeps running with the me/others split. This message
 deliberately does *not* say "pyannote is not installed". That's a different
 problem, and sending you to install something you already have is worse than

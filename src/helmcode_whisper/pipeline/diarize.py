@@ -15,7 +15,10 @@ Everything here is optional: without pyannote installed, or without an HF token,
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import subprocess
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -37,6 +40,11 @@ def _quiet_import():
     # warns — twice per model — that its cache will use more disk. True, and
     # nothing the user can act on from here.
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    # torch 2.13 logs "triton not found; flop counting will not work" through
+    # its own logger the first time this module is imported. triton has no
+    # Windows build, flop counting is not something this tool asks for, and the
+    # line lands in the middle of `hcw doctor` looking like a problem.
+    logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
     with warnings.catch_warnings():
         # `message` is matched from the start of the warning text, and this one
         # opens with a newline and runs for forty lines — hence the (?s) so `.`
@@ -89,11 +97,13 @@ def availability() -> tuple[bool, str | None]:
         if (exc.name or "").partition(".")[0] == "pyannote":
             return False, (
                 "pyannote is not installed. Install it with "
-                "`uv pip install 'helmcode-whisper[diarize]'`, or keep the me/others split."
+                "`uv pip install 'helmcode-whisper[diarize]' --torch-backend=auto`, or keep "
+                "the me/others split. The flag is what gets a torch that can see your GPU; "
+                "without it PyPI hands Windows a CPU-only build."
             )
         return False, (
             f"pyannote is installed but {exc.name} is missing. Reinstall the extra with "
-            "`uv pip install --reinstall 'helmcode-whisper[diarize]'`."
+            "`uv pip install --reinstall 'helmcode-whisper[diarize]' --torch-backend=auto`."
         )
     except ImportError as exc:
         # An ImportError that is not a missing module is a version mismatch:
@@ -102,7 +112,7 @@ def availability() -> tuple[bool, str | None]:
         return False, (
             f"pyannote is installed but will not import: {exc}. This is usually a torch "
             "version mismatch — reinstall the extra with "
-            "`uv pip install --reinstall 'helmcode-whisper[diarize]'`."
+            "`uv pip install --reinstall 'helmcode-whisper[diarize]' --torch-backend=auto`."
         )
     except Exception as exc:
         return False, f"pyannote is installed but will not load: {type(exc).__name__}: {exc}"
@@ -111,6 +121,66 @@ def availability() -> tuple[bool, str | None]:
 
 def available() -> bool:
     return availability()[0]
+
+
+@dataclass(frozen=True)
+class Device:
+    """Where diarization will run, and what to do if that is the slow answer."""
+
+    name: str  # "cuda" or "cpu"
+    gpu: str | None = None
+    # Set when the machine has a CUDA GPU that the installed torch cannot use.
+    # This is the trap the whole extra walks into on Windows, so it gets said
+    # out loud rather than left as a number nobody notices.
+    advice: str | None = None
+
+
+def device() -> Device | None:
+    """The device pyannote would pick, resolved without loading any weights.
+
+    Worth reporting on its own because the answer is wrong by default on
+    Windows and silently so. `pip install torch` there resolves to the CPU-only
+    wheel on PyPI, which is 122 MB against the 527 MB Linux build that carries
+    CUDA, so `torch.cuda.is_available()` is False on a machine with a perfectly
+    good GPU and the slowest step in the pipeline quietly takes ten times
+    longer than it needs to.
+    """
+    try:
+        with _quiet_import():
+            import torch
+    except Exception:
+        return None
+
+    if torch.cuda.is_available():
+        try:
+            return Device("cuda", gpu=torch.cuda.get_device_name(0))
+        except Exception:
+            return Device("cuda")
+
+    advice = None
+    if torch.version.cuda is None and _machine_has_an_nvidia_gpu():
+        advice = (
+            "this machine has an NVIDIA GPU and this torch was built without CUDA. "
+            "Reinstall it from PyTorch's own index, which PyPI does not mirror: "
+            "`uv pip install -e \".[diarize]\" --torch-backend=auto`"
+        )
+    return Device("cpu", advice=advice)
+
+
+def _machine_has_an_nvidia_gpu() -> bool:
+    """Ask the driver, not torch. Cheap, and the whole point is that torch is wrong."""
+    if shutil.which("nvidia-smi") is None:
+        return False
+    try:
+        finished = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return finished.returncode == 0 and bool(finished.stdout.strip())
 
 
 def diarize(wav_path: Path, hf_token: str | None) -> tuple[list[Turn], str]:
