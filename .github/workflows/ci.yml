@@ -47,7 +47,7 @@ jobs:
         run: uv run python -c "import sys; print(sys.version)"
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests examples
 
       # No test here touches the network or an audio device; the suite covers
       # chunk planning, echo suppression, parsing, storage and the no-egress

@@ -91,7 +91,7 @@ git clone https://github.com/helmcode/helmcode-whisper
 cd helmcode-whisper
 uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
 cp .env.example .env                    # then paste your HELMCODE_API_KEY
-uv run pytest -q                        # 122 tests, none of them touch the network
+uv run pytest -q                        # a couple of seconds, none of it networked
 ```
 
 Working from a checkout, `.env` in the repo root is the one that gets picked up,
@@ -389,6 +389,21 @@ guessing.
 `~/helmcode-whisper/index.sqlite3` holds the search index across all meetings.
 Delete a meeting folder and it's gone; nothing else has a copy.
 
+### Building on it
+
+`notes.json` is the one to build on. [docs/DATA.md](docs/DATA.md) has the exact
+shape of every file and every progress event, copied out of a real run, and
+[examples/](examples/) has three short programs that use them:
+
+| | |
+|---|---|
+| [`01_action_items.py`](examples/01_action_items.py) | every open action item across every meeting. Imports `json` and `pathlib` and nothing from this package, because a folder of JSON is the whole integration surface for most things. |
+| [`02_drive_process.py`](examples/02_drive_process.py) | run `process` from your own program and follow it step by step, which is what a UI needs. |
+| [`03_search_from_python.py`](examples/03_search_from_python.py) | search without inheriting a print statement. |
+
+The files and the event stream are the parts meant to be depended on. The Python
+functions are there, and the CLI uses them, but this is a 0.1 and they can move.
+
 ### Driving it from something other than a terminal
 
 ```bash
@@ -582,6 +597,13 @@ Not planned: a hosted version, a bot that joins calls, or anything that moves
 the audio off your machine.
 
 ---
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the layout, what the tests do and do
+not cover, and the four things that will trip you up. The short version:
+`uv pip install -e ".[dev]"`, `uv run pytest -q`, and `hcw doctor` before you
+open an issue.
 
 ## License
 
