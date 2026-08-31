@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
+
+import numpy as np
+
 from helmcode_whisper.pipeline import index
 from helmcode_whisper.pipeline.model import ME, Segment
 
@@ -117,4 +121,87 @@ def test_deleting_a_meeting_takes_its_passages_and_vectors(tmp_path) -> None:
         "SELECT rowid FROM passages_fts WHERE passages_fts MATCH 'hola'"
     ).fetchall()
     assert len(hits) == 1
+    connection.close()
+
+
+def test_two_embedding_models_in_one_index_do_not_crash_the_search(tmp_path) -> None:
+    """The bug this replaced: a raw numpy reshape error out of `hcw search`.
+
+    Changing HCW_EMBED_MODEL left the archive holding vectors of two widths, and
+    `load_vectors` reshaped the lot to the first row's dimension —
+    "cannot reshape array of size 9216 into shape (3,4096)", from a command the
+    user ran to look something up.
+    """
+    connection = index.connect(tmp_path / "index.sqlite3")
+    connection.execute(
+        "INSERT INTO meetings (id, title, date, path) VALUES ('m', 't', '2026-01-01', '/x')"
+    )
+    for model, dim in (("old-embed", 8), ("old-embed", 8), ("new-embed", 4)):
+        cursor = connection.execute(
+            "INSERT INTO passages (meeting_id, start, end, speaker, text) "
+            "VALUES ('m', 0, 1, 'Me', 'hola')"
+        )
+        vector = np.ones(dim, dtype=np.float32)
+        connection.execute(
+            "INSERT INTO vectors (passage_id, dim, vec, model) VALUES (?, ?, ?, ?)",
+            (cursor.lastrowid, dim, vector.tobytes(), model),
+        )
+    connection.commit()
+
+    ids, matrix, stale = index.load_vectors(connection, model="new-embed")
+
+    assert matrix.shape == (1, 4)
+    assert len(ids) == 1
+    # The two the current model cannot compare against are reported, not hidden.
+    assert stale == 2
+    connection.close()
+
+
+def test_vectors_from_an_older_index_are_still_searchable(tmp_path) -> None:
+    """Upgrading must not blank the archive, so an unlabelled vector counts."""
+    db = tmp_path / "index.sqlite3"
+    connection = index.connect(db)
+    connection.execute(
+        "INSERT INTO meetings (id, title, date, path) VALUES ('m', 't', '2026-01-01', '/x')"
+    )
+    cursor = connection.execute(
+        "INSERT INTO passages (meeting_id, start, end, speaker, text) "
+        "VALUES ('m', 0, 1, 'Me', 'hola')"
+    )
+    # Written before the `model` column existed.
+    connection.execute(
+        "INSERT INTO vectors (passage_id, dim, vec) VALUES (?, ?, ?)",
+        (cursor.lastrowid, 4, np.ones(4, dtype=np.float32).tobytes()),
+    )
+    connection.commit()
+    connection.close()
+
+    connection = index.connect(db)
+    ids, matrix, stale = index.load_vectors(connection, model="qwen3-embedding")
+
+    assert len(ids) == 1
+    assert matrix.shape == (1, 4)
+    assert stale == 0
+    connection.close()
+
+
+def test_the_model_column_is_added_to_an_index_that_predates_it(tmp_path) -> None:
+    db = tmp_path / "index.sqlite3"
+    connection = sqlite3.connect(db)
+    connection.executescript(
+        """
+        CREATE TABLE vectors (
+            passage_id  INTEGER PRIMARY KEY,
+            dim         INTEGER NOT NULL,
+            vec         BLOB NOT NULL
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    connection = index.connect(db)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(vectors)")}
+
+    assert "model" in columns
     connection.close()

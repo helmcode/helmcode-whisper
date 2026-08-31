@@ -388,6 +388,19 @@ exact product name the embedding blurred; the third puts the right one first.
 Without an API key it degrades to keyword search and says so in the output
 rather than quietly returning worse answers.
 
+**Changing `HCW_EMBED_MODEL` is not free.** Vectors from two models do not live
+in the same space, so the index searches the ones the current model produced and
+reports the rest instead of comparing numbers that do not mean anything:
+
+```
+  312 passages were embedded with another model and sit outside the semantic
+  search - re-run `hcw process` on those meetings
+```
+
+They are still there and still reachable by keyword. `hcw process` on a meeting
+re-embeds it with the model configured now; every other step comes back from
+cache, so it costs one embedding call per meeting and nothing else.
+
 ---
 
 ## Speaker diarization

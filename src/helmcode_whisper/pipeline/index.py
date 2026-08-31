@@ -59,7 +59,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
 CREATE TABLE IF NOT EXISTS vectors (
     passage_id  INTEGER PRIMARY KEY REFERENCES passages(id) ON DELETE CASCADE,
     dim         INTEGER NOT NULL,
-    vec         BLOB NOT NULL
+    vec         BLOB NOT NULL,
+    model       TEXT
 );
 """
 
@@ -78,7 +79,23 @@ def connect(db_path: Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(_SCHEMA)
+    _migrate(connection)
     return connection
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    """Bring an index written by an older version up to the current schema.
+
+    Only additive changes belong here. `vectors.model` is left NULL on the rows
+    that predate it rather than guessed at: `load_vectors` treats an unlabelled
+    vector as belonging to whatever model is configured now, which is what
+    produced it in every case an 0.1 can have created, and the dimension check
+    catches the one case where that assumption is wrong.
+    """
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(vectors)")}
+    if "model" not in columns:
+        connection.execute("ALTER TABLE vectors ADD COLUMN model TEXT")
+        connection.commit()
 
 
 def build_passages(segments: list[Segment]) -> list[Passage]:
@@ -150,8 +167,9 @@ def index_meeting(
             for passage_id, vector in zip(batch_ids, vectors, strict=True):
                 array = _normalize(np.asarray(vector, dtype=np.float32))
                 connection.execute(
-                    "INSERT OR REPLACE INTO vectors (passage_id, dim, vec) VALUES (?, ?, ?)",
-                    (passage_id, array.size, array.tobytes()),
+                    "INSERT OR REPLACE INTO vectors (passage_id, dim, vec, model) "
+                    "VALUES (?, ?, ?, ?)",
+                    (passage_id, array.size, array.tobytes(), embed_model),
                 )
                 embedded += 1
 
@@ -185,14 +203,45 @@ def delete_meeting(
     return int(removed)
 
 
-def load_vectors(connection: sqlite3.Connection) -> tuple[list[int], np.ndarray]:
-    rows = connection.execute("SELECT passage_id, dim, vec FROM vectors").fetchall()
+def load_vectors(
+    connection: sqlite3.Connection, *, model: str
+) -> tuple[list[int], np.ndarray, int]:
+    """Every vector `model` produced, plus how many were left out.
+
+    Two embedding models in one index is not a matter of taste. Their vectors do
+    not live in the same space, so a cosine similarity across them is a number
+    with no meaning; and when the dimensions differ too — 4096 for
+    qwen3-embedding, something else for anything that replaces it — the reshape
+    below used to fail with `cannot reshape array of size 9216 into shape
+    (3,4096)`, which tells the person who changed `HCW_EMBED_MODEL` nothing
+    about what they changed.
+
+    So the current model's vectors are the ones searched, and the rest are
+    counted and reported rather than dropped in silence: they are not gone, they
+    are waiting for `hcw process` to run again on the meetings they came from.
+
+    Unlabelled rows predate the `model` column and are taken at face value. The
+    dimension filter is what stops that assumption doing damage if it is wrong.
+    """
+    rows = connection.execute(
+        "SELECT passage_id, dim, vec, model FROM vectors ORDER BY passage_id"
+    ).fetchall()
     if not rows:
-        return [], np.empty((0, 0), dtype=np.float32)
-    dim = rows[0]["dim"]
-    ids = [row["passage_id"] for row in rows]
-    matrix = np.frombuffer(b"".join(row["vec"] for row in rows), dtype=np.float32)
-    return ids, matrix.reshape(len(rows), dim)
+        return [], np.empty((0, 0), dtype=np.float32), 0
+
+    usable = [row for row in rows if row["model"] is None or row["model"] == model]
+    if usable:
+        # The newest vector decides the dimension: after a model change it is
+        # the one the query vector will match.
+        dim = usable[-1]["dim"]
+        usable = [row for row in usable if row["dim"] == dim]
+    stale = len(rows) - len(usable)
+    if not usable:
+        return [], np.empty((0, 0), dtype=np.float32), stale
+
+    ids = [row["passage_id"] for row in usable]
+    matrix = np.frombuffer(b"".join(row["vec"] for row in usable), dtype=np.float32)
+    return ids, matrix.reshape(len(usable), dim), stale
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:

@@ -63,15 +63,16 @@ class Hit:
 
 def run_search(config: Config, query: str, *, limit: int = 5) -> None:
     """The CLI entry point: search, then print."""
-    hits, semantic = search_hits(config, query, limit=limit)
+    hits, semantic, stale = search_hits(config, query, limit=limit)
     if not hits:
         console().print(f"\n  Nothing found for “{query}”.\n", style="tertiary")
         return
-    _print_hits(query, hits, semantic=semantic)
+    _print_hits(query, hits, semantic=semantic, stale=stale)
 
 
-def search_hits(config: Config, query: str, *, limit: int = 5) -> tuple[list[Hit], bool]:
-    """Search, and return the hits plus whether semantic recall was available.
+def search_hits(config: Config, query: str, *, limit: int = 5) -> tuple[list[Hit], bool, int]:
+    """Search, and return the hits, whether semantic recall was available, and
+    how many indexed passages the current embedding model cannot see.
 
     Kept separate from `run_search` so anything other than a terminal — a local
     UI, a script, an editor plugin — can use the search without inheriting a
@@ -87,11 +88,14 @@ def search_hits(config: Config, query: str, *, limit: int = 5) -> tuple[list[Hit
     try:
         semantic = True
         vector_hits: list[Hit] = []
+        stale = 0
 
         if config.api_key:
             try:
                 client = HelmcodeClient(config)
-                vector_hits = _vector_search(connection, client, query, config.embed_model)
+                vector_hits, stale = _vector_search(
+                    connection, client, query, config.embed_model
+                )
             except ApiError:
                 semantic = False
         else:
@@ -101,7 +105,7 @@ def search_hits(config: Config, query: str, *, limit: int = 5) -> tuple[list[Hit
         candidates = _merge_hits(vector_hits, keyword_hits)
 
         if not candidates:
-            return [], semantic
+            return [], semantic, stale
 
         rankings = [
             [hit.passage_id for hit in sorted(vector_hits, key=lambda h: h.score, reverse=True)],
@@ -119,7 +123,7 @@ def search_hits(config: Config, query: str, *, limit: int = 5) -> tuple[list[Hit
             except ApiError:
                 pass
 
-        return _fuse(candidates, rankings)[:limit], semantic
+        return _fuse(candidates, rankings)[:limit], semantic, stale
     finally:
         connection.close()
         if client is not None:
@@ -140,10 +144,11 @@ def _fuse(candidates: list[Hit], rankings: list[list[int]]) -> list[Hit]:
 
 def _vector_search(
     connection: sqlite3.Connection, client: HelmcodeClient, query: str, model: str
-) -> list[Hit]:
-    ids, matrix = load_vectors(connection)
+) -> tuple[list[Hit], int]:
+    """Cosine recall, plus the count of passages this model cannot compare against."""
+    ids, matrix, stale = load_vectors(connection, model=model)
     if not ids:
-        return []
+        return [], stale
 
     vector = np.asarray(client.embed([query], model=model)[0], dtype=np.float32)
     norm = float(np.linalg.norm(vector))
@@ -159,7 +164,7 @@ def _vector_search(
     else:
         candidates = np.arange(scores.size)
     top = candidates[np.argsort(-scores[candidates])]
-    return _hydrate(connection, [(ids[i], float(scores[i]), "vector") for i in top])
+    return _hydrate(connection, [(ids[i], float(scores[i]), "vector") for i in top]), stale
 
 
 def _keyword_search(connection: sqlite3.Connection, query: str) -> list[Hit]:
@@ -242,7 +247,7 @@ def _rerank_ranking(
     return ranking
 
 
-def _print_hits(query: str, hits: list[Hit], *, semantic: bool) -> None:
+def _print_hits(query: str, hits: list[Hit], *, semantic: bool, stale: int = 0) -> None:
     console().print()
     # The eyebrow style letter-spaces its text, which reads as a label and as
     # nonsense on anything longer. The query goes below it, unspaced.
@@ -253,6 +258,17 @@ def _print_hits(query: str, hits: list[Hit], *, semantic: bool) -> None:
             Text(
                 "  keyword search only — no embeddings available, so meaning-based "
                 "matches are missing",
+                style="warn",
+            )
+        )
+    if stale:
+        # Not an error, and not silent either: those passages are still indexed
+        # and still reachable by keyword. They just cannot be compared against a
+        # query vector that a different model produced.
+        console().print(
+            Text(
+                f"  {stale} passages were embedded with another model and sit outside "
+                "the semantic search - re-run `hcw process` on those meetings",
                 style="warn",
             )
         )
