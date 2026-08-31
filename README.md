@@ -4,10 +4,10 @@ Self-hosted meeting notes with open models.
 
 It records your microphone and your system audio as two separate tracks,
 transcribes them with **Whisper large-v3** on the [Helmcode](https://helmcode.com)
-API, separates speakers **locally** with pyannote, and writes structured notes —
-summary, decisions, action items, open questions, quotes — with **DeepSeek V4
-Flash**. Everything it produces stays in a folder on your disk, and you can
-search all of it by meaning.
+API, separates speakers **locally** with pyannote, and writes structured notes
+with **DeepSeek V4 Flash**: a summary, the decisions, the action items, the
+open questions and the quotes. Everything it produces stays in a folder on your
+disk, and you can search all of it by meaning.
 
 ```bash
 hcw record -t "pricing review"     # Ctrl+C when the meeting ends
@@ -21,7 +21,7 @@ hcw search "what did we say about the enterprise tier"
 
 Meeting-notes products are convenient and they are also the single most
 sensitive audio stream in a company: pricing, salaries, legal exposure, customer
-names, and — literally — everybody's voice.
+names, and literally everybody's voice.
 
 Under the GDPR a voice recording used to tell people apart is **biometric data**:
 special-category personal data under Article 9, on the same footing as health
@@ -41,10 +41,10 @@ This tool draws the line in a different place:
 | Storage | `~/helmcode-whisper/` | Nothing |
 
 The one third party is Helmcode: inference on dedicated GPUs in the EU, zero
-logs, and no training on your data. Diarization does not even go that far — the
+logs, and no training on your data. Diarization doesn't even go that far. The
 step that turns a voice into an identity runs on your CPU, always, by design.
 
-There is one other host in the picture, and it is worth naming rather than
+There's one other host in the picture, and it's worth naming rather than
 hiding: if you enable diarization, pyannote downloads its model weights from
 huggingface.co the first time it runs. No meeting content is sent there, and you
 can pre-download the weights and then work fully offline.
@@ -57,7 +57,7 @@ can pre-download the weights and then work fully offline.
   roadmap, not in v1.
 - **Not a product.** It is a reference project for the article *"build your own
   Granola with open models"*. Granola and its competitors have calendar
-  integration, template libraries and years of polish. This does not pretend to.
+  integration, template libraries and years of polish. This doesn't pretend to.
 
 ---
 
@@ -72,9 +72,9 @@ cp .env.example .env                    # then paste your HELMCODE_API_KEY
 hcw doctor                              # checks devices, ffmpeg, models, everything
 ```
 
-Not on PyPI. Installing from git is one line either way, and a package index
-entry is a promise about versions that a 0.1 with two untested platforms has no
-business making yet.
+Not on PyPI. Installing from git is one line either way, and publishing to an
+index promises a stability that a 0.1 with two untested platforms has no
+business promising yet.
 
 Working on it instead of with it:
 
@@ -85,7 +85,7 @@ uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip instal
 ```
 
 `hcw doctor` is the first thing to run and the first thing to paste into an
-issue. It tells you exactly which of the moving parts is not in place.
+issue. It tells you exactly which of the moving parts isn't in place.
 
 Then:
 
@@ -137,12 +137,12 @@ F I L E S ───────────────────────�
 
 Note `diarize 84s` against `diarization 89s`: diarization ran while the
 transcription requests were in flight, so it only cost the pipeline what it had
-left to do when they came back. The notes are in Spanish because that is what
-`templates/notes.md` asks for — see [Customizing the notes](#customizing-the-notes).
+left to do when they came back. The notes are in Spanish because that's what
+`templates/notes.md` asks for. See [Customizing the notes](#customizing-the-notes).
 
 ### Getting system audio, per platform
 
-This is the part that differs, and it is where nearly every support issue comes
+This is the part that differs, and it's where nearly every support issue comes
 from. Two tracks are recorded and never mixed: your microphone is "me", the
 system loopback is "everyone else".
 
@@ -152,17 +152,17 @@ system loopback is "everyone else".
 | **Linux** | PipeWire/PulseAudio monitor source | None | Implemented, not yet tested |
 | **macOS** | BlackHole virtual device | Manual, see below | Implemented, not yet tested |
 
-**Windows** — nothing to do. Windows exposes every output device as a hidden
+**Windows.** Nothing to do. Windows exposes every output device as a hidden
 loopback input; `hcw doctor` will show it next to `system`.
 
-**Linux** — every sink has a `.monitor` source carrying exactly what it plays.
+**Linux.** Every sink has a `.monitor` source carrying exactly what it plays.
 The tool asks `pactl` for your default sink and records its monitor. If
 `hcw devices` shows no monitor, check that `pactl get-default-sink` returns
 something and that PortAudio can see it.
 
-**macOS** — macOS has no software route to the system mix; an app can only
-record what the OS hands it, and the OS hands it nothing. The workaround is a
-virtual audio device:
+**macOS.** There is no software route to the system mix on macOS. An app can
+only record what the OS hands it, and the OS hands it nothing. The workaround is
+a virtual audio device:
 
 1. Install [BlackHole 2ch](https://existential.audio/blackhole/) (`brew install
    blackhole-2ch`).
@@ -170,12 +170,12 @@ virtual audio device:
 3. Tick both your real speakers/headphones **and** BlackHole. Set your real
    output as the primary (top of the list) so you still hear the meeting.
 4. Set that Multi-Output Device as the system output in **Sound** settings.
-5. Run `hcw doctor` — `system` should now show BlackHole.
+5. Run `hcw doctor`. `system` should now show BlackHole.
 
-These steps are written from the BlackHole documentation rather than from a
-machine that ran them, which is the same reason macOS is marked untested in the
-table above. A native ScreenCaptureKit helper would remove the whole dance and
-is on the roadmap.
+These steps come from the BlackHole documentation, not from a machine that ran
+them. That's the same reason macOS is marked untested in the table above. A
+native ScreenCaptureKit helper would remove the whole dance and is on the
+roadmap.
 
 **No system audio at all?** The tool degrades on purpose: it records the
 microphone only, warns you once, and the rest of the pipeline works. That is the
@@ -187,13 +187,13 @@ right mode for an in-person meeting with everyone around one laptop.
 
 Recording a conversation without telling the other people in it is illegal in
 many jurisdictions and a bad idea in all of them. Rules differ by country and
-sometimes within one — some places need only one participant's consent, others
+sometimes within one. Some places need only one participant's consent, others
 need everyone's, and workplace recordings often carry extra obligations.
 
 `hcw record` prints a reminder every single time it starts, and it will keep
-doing that. Tell people, get their agreement, and if you are recording for work,
-check with whoever owns that decision. This tool makes recording easy; it does
-not make it lawful.
+doing that. Tell people, get their agreement, and if you're recording for work,
+check with whoever owns that decision. This tool makes recording easy; it
+doesn't make it lawful.
 
 ---
 
@@ -206,7 +206,7 @@ templates/notes.md
 ```
 
 Edit it. Change the language, the tone, what counts as a decision, add a section
-for risks — that is the whole point of running your own. An English variant
+for risks. That is the whole point of running your own. An English variant
 ships as `templates/notes.en.md`; point at any file with:
 
 ```bash
@@ -216,7 +216,7 @@ HCW_NOTES_TEMPLATE=~/my-notes-prompt.md hcw process
 Available placeholders: `{{TITLE}}`, `{{DATE}}`, `{{DURATION}}`, `{{SPEAKERS}}`,
 `{{TRANSCRIPT}}`.
 
-The model is a variable too. `deepseek-v4-flash` is the default because it is
+The model is a variable too. `deepseek-v4-flash` is the default because it's
 the strongest general model in the catalog with no tier attached, but any chat
 model the API serves will do:
 
@@ -229,7 +229,7 @@ documented as validated on `qwen3.6` and `gemma4`, and the ladder in
 `pipeline/notes.py` walks down to looser modes rather than failing, so a change
 here shows up as a different `mode` in `meta.json` and not as an error.
 
-What the template does *not* control is the **shape** of the output — the five
+What the template does *not* control is the **shape** of the output. The five
 sections are fixed by a JSON schema so that `notes.md`, `notes.html` and the
 search index never have to guess. To change the sections themselves, edit
 `NOTES_SCHEMA` in `src/helmcode_whisper/pipeline/notes.py`.
@@ -240,7 +240,7 @@ search index never have to guess. To change the sections themselves, edit
 
 ```mermaid
 flowchart TB
-    subgraph rec["hcw record — offline"]
+    subgraph rec["hcw record (offline)"]
         MIC["microphone<br/>PortAudio"] --> MICWAV["audio-mic.wav"]
         SYS["system audio<br/>WASAPI / monitor / BlackHole"] --> SYSWAV["audio-system.wav"]
     end
@@ -265,7 +265,7 @@ flowchart TB
 ```
 
 Everything inside `hcw record` is offline. Only the three boxes naming a model
-leave the machine, and they only reach `HELMCODE_BASE_URL` —
+leave the machine, and they only reach `HELMCODE_BASE_URL`.
 `tests/test_no_egress.py` fails the build if any other host appears in the
 package.
 
@@ -281,7 +281,7 @@ therefore ~35 chunks per track, ~70 requests. Chunks are cut on silence found by
 VAD so sentences survive; long silences fall outside every chunk and are never
 uploaded; and only when speech runs unbroken past the limit is a cut forced,
 with 2 s of overlap so the model has context on both sides. Requests run four at
-a time through a single pool covering both tracks — sequentially, `process`
+a time through a single pool covering both tracks. One after another, `process`
 would take longer than the meeting did, and a pool per track would leave the
 microphone waiting for the system audio to finish. Four rather than more
 because the API allows five parallel requests per key and 429s the sixth;
@@ -289,8 +289,8 @@ because the API allows five parallel requests per key and 429s the sixth;
 recording, one at a time took 22 s and four at a time took 2-3 s.
 
 **Diarization runs underneath transcription.** It needs the prepared system
-track and nothing else — not the transcript — so it starts as soon as that file
-exists rather than after the last chunk comes back. It is local CPU work and
+track and nothing else, not even the transcript, so it starts as soon as that
+file exists rather than after the last chunk comes back. It is local CPU work and
 transcription is almost entirely idle waiting on HTTP, so running them in
 sequence means each one starves the resource the other wants. Since diarization
 is the most expensive step by a wide margin, what it costs the pipeline is now
@@ -300,22 +300,22 @@ records both numbers: `timings_seconds.diarize` is the wait, and
 
 **Speakers are assigned per word, not per segment.** Whisper draws segment
 boundaries from punctuation and prosody, and it will happily put two people in
-one segment — on the first real recording, pyannote found 18 turns where Whisper
+one segment. On the first real recording, pyannote found 18 turns where Whisper
 returned 3 segments. Asking for word timestamps alongside segment timestamps (one
 request, both granularities) makes it possible to cut a segment exactly where the
-speaker changes, mid-sentence if that is where the handover happened. A change
-has to hold for three words to count, so an interjected "yes" does not shatter a
+speaker changes, mid-sentence if that's where the handover happened. A change
+has to hold for three words to count, so an interjected "yes" doesn't shatter a
 sentence into confetti.
 
-**Echo suppression.** If you are not wearing headphones, your microphone hears
+**Echo suppression.** If you're not wearing headphones, your microphone hears
 the remote audio coming out of your speakers, and a naive merge says everything
 twice. A mic segment is dropped when most of its words appear in what the remote
-side was saying at that moment — words of four letters or more, since function
-words are in every window ever recorded and would drag unrelated speech up to
-the threshold.
+side was saying at that moment. Only words of four letters or more count, since
+function words are in every window ever recorded and would drag unrelated speech
+up to the threshold.
 
 The comparison is against the whole window rather than segment against segment,
-and that detail is the difference between working and not. The two tracks are
+and that one detail is what makes it work at all. The two tracks are
 transcribed independently, so Whisper cuts the echoed copy differently from the
 original: a mic segment routinely straddles two system segments and matches
 neither. Measured against an hour of audio played through speakers, the
@@ -326,18 +326,18 @@ edge, because leaving an echo in is visible and recoverable while deleting what
 somebody said is neither.
 
 Dropped segments stay in `transcript.json` with a reason attached, so the
-decision is auditable. Wear headphones anyway; it is better audio, and no
+decision is auditable. Wear headphones anyway; it's better audio, and no
 heuristic beats not having the problem.
 
 ### Every step is cached
 
 Each step writes its result to the meeting's `.cache/` before the next one
-starts. If the merge fails, `process` does not re-transcribe an hour of audio.
+starts. If the merge fails, `process` doesn't re-transcribe an hour of audio.
 Fix the problem, run it again, and only the broken step costs anything.
 `--force` throws the cache away.
 
 Cached entries are keyed by a content hash of the audio they came from, not by
-position, so nothing survives that should not: change the recording and every
+position, so nothing survives that shouldn't: change the recording and every
 downstream result for it is a miss. That covers the encoded chunks, the
 transcription of each one, the chunk plan, and the diarization.
 
@@ -362,7 +362,7 @@ well, and neither can be turned back into an owner and a due date without
 guessing.
 
 `~/helmcode-whisper/index.sqlite3` holds the search index across all meetings.
-Delete a meeting folder and it is gone; nothing else has a copy.
+Delete a meeting folder and it's gone; nothing else has a copy.
 
 ### Driving it from something other than a terminal
 
@@ -371,10 +371,10 @@ hcw process --progress-json
 ```
 
 One JSON object per line on stdout, with the terminal output moved to stderr so
-the two audiences do not interleave. Every step reports when it starts and
+the two audiences don't interleave. Every step reports when it starts and
 finishes, transcription reports fragments done out of the total, and diarization
-carries an estimate derived from the factor measured on this machine — omitted
-entirely on a GPU, which nobody has measured.
+carries an estimate derived from the factor measured on this machine. On a GPU
+the estimate is left out entirely, because nobody has measured one.
 
 ```
 {"event": "step", "step": "transcribe", "state": "running", "total": 69}
@@ -382,7 +382,7 @@ entirely on a GPU, which nobody has measured.
 {"event": "step", "step": "diarize", "state": "running", "estimate_seconds": 1620}
 ```
 
-Fields are additive: ignore one you do not know, and a new one will not break a
+Fields are additive: ignore one you don't know, and a new one won't break a
 reader that already works.
 
 ---
@@ -401,9 +401,9 @@ exact product name the embedding blurred; the third puts the right one first.
 Without an API key it degrades to keyword search and says so in the output
 rather than quietly returning worse answers.
 
-**Changing `HCW_EMBED_MODEL` is not free.** Vectors from two models do not live
+**Changing `HCW_EMBED_MODEL` isn't free.** Vectors from two models don't live
 in the same space, so the index searches the ones the current model produced and
-reports the rest instead of comparing numbers that do not mean anything:
+reports the rest instead of comparing numbers that don't mean anything:
 
 ```
   312 passages were embedded with another model and sit outside the semantic
@@ -433,13 +433,13 @@ Then, once:
 
    Every guide names the first two. pyannote.audio 4 pulls the third while
    loading the 3.1 pipeline, and its 403 only appears *after* the other two have
-   downloaded — which looks exactly like "I accepted the terms and it still
+   downloaded, which looks exactly like "I accepted the terms and it still
    fails". Accept all three and it works.
 2. Put a Hugging Face token in `.env` as `HF_TOKEN`.
 
-It uses a local CUDA GPU if you have one and CPU otherwise. On CPU it is the
-slowest step in the pipeline by a wide margin, which is why it is started early
-and runs while the transcription requests are in flight — on a meeting whose
+It uses a local CUDA GPU if you have one and CPU otherwise. On CPU it's the
+slowest step in the pipeline by a wide margin, which is why it starts early
+and runs while the transcription requests are in flight. On a meeting whose
 transcription takes longer than its diarization, it becomes free. Skip it with
 `--no-diarize` and you still get the me/others split, which is often enough for
 a two-party call.
@@ -450,53 +450,54 @@ a two-party call.
 
 Nine out of ten problems are capture problems. Start with `hcw doctor`.
 
-**`system  none found`** — see the platform section above. On Windows, check
+**`system  none found`.** See the platform section above. On Windows, check
 that an output device is actually active. On Linux, check `pactl
 get-default-sink`. On macOS, this is expected until BlackHole is installed.
 
-**The system track is silent** — something was routed elsewhere. On macOS,
+**The system track is silent.** Something was routed elsewhere. On macOS,
 confirm the Multi-Output Device is the *system* output, not just an available
 one. On Windows, confirm the meeting app is playing through the default device
-and not a headset the loopback does not cover.
+and not a headset the loopback doesn't cover.
 
-**Everything is said twice in the transcript** — echo suppression did not catch
+**Everything is said twice in the transcript.** Echo suppression didn't catch
 it, usually because the mic version was garbled enough that the texts stopped
 matching. Wear headphones.
 
-**`dropped audio blocks`** at the end of a recording — the machine could not
+**`dropped audio blocks`** at the end of a recording means the machine couldn't
 keep up with the disk writer. The transcript will have holes. Close whatever
 else was hammering the disk.
 
-**Ctrl+C during `record` does not stop it immediately** — it finishes flushing
+**Ctrl+C during `record` doesn't stop it immediately.** It finishes flushing
 the current buffer first. Give it a second; the WAV is closed cleanly.
 
-**`524` from the transcription endpoint** — a chunk was too long for the
+**`524` from the transcription endpoint.** A chunk was too long for the
 endpoint. Should not happen with the default limits; if it does, open an issue
 with the `chunks` block from `meta.json`.
 
 ## Other things that bite
 
 **Everyone in the meeting was speaking English but the transcript is in
-Spanish** — Whisper picks one language per request, and a request is a chunk. A
+Spanish.** Whisper picks one language per request, and a request is a chunk. A
 chunk containing two languages gets transcribed in one of them and *translated*
 from the other. Pass `--language` when you know it; expect the effect when a
 meeting genuinely code-switches. Per-chunk language detection is why this shows
 up as whole passages in the wrong language rather than odd words.
 
 **`hcw doctor` says pyannote "will not import: cannot import name ... from
-`torch._dynamo`"** — pyannote is installed and its torch is not usable, usually
-after torch was upgraded in place and left a half-matched tree behind.
+`torch._dynamo`".** That means pyannote is installed and its torch isn't
+usable, usually after torch was upgraded in place and left a half-matched tree
+behind.
 Reinstall the extra: `uv pip install --reinstall 'helmcode-whisper[diarize]'`.
 Until then `process` keeps running with the me/others split. This message
-deliberately does *not* say "pyannote is not installed" — that is a different
+deliberately does *not* say "pyannote is not installed". That's a different
 problem, and sending you to install something you already have is worse than
 saying nothing.
 
-**`OSError [WinError 4551]` loading `torch/lib/shm.dll` on Windows** — Smart App
+**`OSError [WinError 4551]` loading `torch/lib/shm.dll` on Windows.** Smart App
 Control blocked an unsigned library. It resolved itself here once Windows had
 evaluated the file, so try again before doing anything drastic. If it persists,
-your choices are to turn Smart App Control off — **which cannot be undone
-without reinstalling Windows** — or to run diarization somewhere else and use
+you have two options: turn Smart App Control off, **which cannot be undone
+without reinstalling Windows**, or run diarization somewhere else and use
 `--no-diarize` locally. `process` degrades to the me/others split either way
 rather than failing.
 
@@ -510,7 +511,7 @@ Honest version, in rough order of how much they would improve the thing:
   `process`.
 - **A native macOS capture helper** using ScreenCaptureKit, so BlackHole and the
   Multi-Output dance disappear.
-- **A local UI** — the CLI is fine for the person who built it and a wall for
+- **A local UI**: the CLI is fine for the person who built it and a wall for
   everyone else.
 - **Speaker naming**: `SPEAKER_00` becomes "Ana" once, and stays Ana across
   every future meeting via voice embeddings.
