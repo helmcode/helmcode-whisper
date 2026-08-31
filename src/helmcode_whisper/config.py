@@ -49,8 +49,10 @@ class Config:
     def require_api_key(self) -> str:
         if not self.api_key:
             raise ConfigError(
-                "HELMCODE_API_KEY is not set. Copy .env.example to .env and fill it in. "
-                "(`hcw record` works without it; `process` and `search` do not.)"
+                "HELMCODE_API_KEY is not set. Put it in a .env file, either in the "
+                f"directory you are running from or in {self.home / '.env'}, or export it "
+                "as an environment variable. Keys come from cloud.helmcode.com. "
+                "(`hcw record` works without one; `process` and `search` do not.)"
             )
         return self.api_key
 

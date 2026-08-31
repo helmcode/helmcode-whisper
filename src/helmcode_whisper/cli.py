@@ -129,7 +129,12 @@ def doctor() -> None:
     status_line(
         "ok" if config.api_key else "warn",
         f"key     {'set' if config.api_key else 'not set'}",
-        "" if config.api_key else "record works without it; process and search do not",
+        ""
+        if config.api_key
+        # Where to put it, not just that it is missing. Someone who installed
+        # with `uv tool install` has no checkout and so no .env.example to copy,
+        # which used to leave the README's own quickstart with nowhere to go.
+        else f"put HELMCODE_API_KEY in {config.home / '.env'} (keys: cloud.helmcode.com)",
     )
     status_line("ok", f"url     {config.base_url}")
     if config.api_key:

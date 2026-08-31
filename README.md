@@ -70,9 +70,15 @@ Requirements: Python 3.11+, `ffmpeg` on your PATH, and a Helmcode API key.
 ```bash
 uv tool install git+https://github.com/helmcode/helmcode-whisper
 
-cp .env.example .env                    # then paste your HELMCODE_API_KEY
+mkdir -p ~/helmcode-whisper                          # where it keeps meetings
+echo "HELMCODE_API_KEY=sk-your-key" > ~/helmcode-whisper/.env
 hcw doctor                              # checks devices, ffmpeg, models, everything
 ```
+
+Get a key at cloud.helmcode.com. `hcw` reads `.env` from the directory you run
+it in, then its parents, then `~/helmcode-whisper`, so the line above works from
+anywhere. `HELMCODE_API_KEY` in the real environment works too and wins over the
+file. Only `process` and `search` need it; `record` does not.
 
 Not on PyPI. Installing from git is one line either way, and publishing to an
 index promises a stability that a 0.1 with two untested platforms has no
@@ -84,7 +90,13 @@ Working on it instead of with it:
 git clone https://github.com/helmcode/helmcode-whisper
 cd helmcode-whisper
 uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
+cp .env.example .env                    # then paste your HELMCODE_API_KEY
+uv run pytest -q                        # 122 tests, none of them touch the network
 ```
+
+Working from a checkout, `.env` in the repo root is the one that gets picked up,
+which is why `.env.example` lives there and is worth reading: every knob the tool
+has is in it, with the reasoning.
 
 `hcw doctor` is the first thing to run and the first thing to paste into an
 issue. It tells you exactly which of the moving parts isn't in place.
