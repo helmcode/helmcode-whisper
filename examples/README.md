@@ -28,7 +28,7 @@ UI needs.
 
 ```bash
 python examples/02_drive_process.py
-python examples/02_drive_process.py 2026-08-31-pricing-review --force
+python examples/02_drive_process.py 2026-08-31-sprint-review --force
 ```
 
 `--progress-json` puts one JSON object per line on stdout and moves the human

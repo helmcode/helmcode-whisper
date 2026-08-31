@@ -5,7 +5,7 @@ stdout and moves everything human to stderr, so you read structured events and
 never scrape a progress bar.
 
     python examples/02_drive_process.py
-    python examples/02_drive_process.py 2026-08-31-pricing-review --force
+    python examples/02_drive_process.py 2026-08-31-sprint-review --force
 
 What it demonstrates, beyond reading lines:
 

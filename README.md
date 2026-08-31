@@ -10,7 +10,7 @@ open questions and the quotes. Everything it produces stays in a folder on your
 disk, and you can search all of it by meaning.
 
 ```bash
-hcw record -t "pricing review"     # Ctrl+C when the meeting ends
+hcw record -t "sprint review"      # Ctrl+C when the meeting ends
 hcw process                        # transcribe, diarize, summarize, index
 hcw search "what did we say about the enterprise tier"
 ```
@@ -104,7 +104,7 @@ issue. It tells you exactly which of the moving parts isn't in place.
 Then:
 
 ```bash
-hcw record -t "pricing review"
+hcw record -t "sprint review"
 # ... have the meeting ... Ctrl+C to stop
 
 hcw process
@@ -116,7 +116,7 @@ it prints on the way, colour stripped:
 
 ```
 P R O C E S S I N G
-  ~/helmcode-whisper/2026-08-31-pricing-review
+  ~/helmcode-whisper/2026-08-31-sprint-review
 
  + mic     1.1 min  0.5 min of speech in 1 chunk
  + system  1.1 min  0.6 min of speech in 1 chunk
@@ -371,7 +371,7 @@ transcription of each one, the chunk plan, and the diarization.
 ## What ends up on disk
 
 ```
-~/helmcode-whisper/2026-08-11-pricing-review/
+~/helmcode-whisper/2026-08-31-sprint-review/
     audio-mic.wav        your microphone
     audio-system.wav     everyone else
     transcript.json      segments with timestamps and speakers

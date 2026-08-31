@@ -55,16 +55,16 @@ def test_action_items_needs_nothing_from_this_package() -> None:
 def _fixture_home(root: Path) -> Path:
     """A meeting folder with the two files the examples read, and nothing else."""
     home = root / "home"
-    meeting = home / "2026-08-31-pricing-review"
+    meeting = home / "2026-08-31-sprint-review"
     meeting.mkdir(parents=True)
     (meeting / "notes.json").write_text(
         json.dumps(
             {
-                "summary": "Precio y plazos.",
-                "decisions": ["Subir el tier enterprise a 750."],
+                "summary": "Estado del proyecto y siguientes pasos.",
+                "decisions": ["Dejar la diarización activada por defecto."],
                 "action_items": [
-                    {"task": "Redactar el anexo", "owner": "Ana", "due": "viernes"},
-                    {"task": "Hablar con legal", "owner": "", "due": ""},
+                    {"task": "Medir la diarización en GPU", "owner": "Ana", "due": "viernes"},
+                    {"task": "Probar la captura en macOS", "owner": "", "due": ""},
                 ],
                 "open_questions": [],
                 "quotes": [],
@@ -74,7 +74,7 @@ def _fixture_home(root: Path) -> Path:
         encoding="utf-8",
     )
     (meeting / "meta.json").write_text(
-        json.dumps({"title": "pricing review", "started_at": "2026-08-31T11:20:00"}),
+        json.dumps({"title": "sprint review", "started_at": "2026-08-31T11:20:00"}),
         encoding="utf-8",
     )
     return home
@@ -100,7 +100,7 @@ def test_action_items_reads_a_meeting(tmp_path: Path) -> None:
     finished = _run("01_action_items.py", _fixture_home(tmp_path))
 
     assert finished.returncode == 0, finished.stderr
-    assert "Redactar el anexo" in finished.stdout
+    assert "Medir la diarización en GPU" in finished.stdout
     assert "Ana" in finished.stdout
     assert "2 action items" in finished.stdout
 
@@ -109,8 +109,8 @@ def test_action_items_filters_by_owner(tmp_path: Path) -> None:
     finished = _run("01_action_items.py", _fixture_home(tmp_path), "--owner", "ana")
 
     assert finished.returncode == 0, finished.stderr
-    assert "Redactar el anexo" in finished.stdout
-    assert "Hablar con legal" not in finished.stdout
+    assert "Medir la diarización en GPU" in finished.stdout
+    assert "Probar la captura en macOS" not in finished.stdout
     # Singular, because one is one.
     assert "1 action item\n" in finished.stdout
 
@@ -120,8 +120,11 @@ def test_action_items_emits_valid_json(tmp_path: Path) -> None:
 
     assert finished.returncode == 0, finished.stderr
     items = json.loads(finished.stdout)
-    assert [item["task"] for item in items] == ["Redactar el anexo", "Hablar con legal"]
-    assert items[0]["meeting"] == "2026-08-31-pricing-review"
+    assert [item["task"] for item in items] == [
+        "Medir la diarización en GPU",
+        "Probar la captura en macOS",
+    ]
+    assert items[0]["meeting"] == "2026-08-31-sprint-review"
 
 
 def test_action_items_says_something_useful_with_no_meetings(tmp_path: Path) -> None:

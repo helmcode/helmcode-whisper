@@ -7,7 +7,7 @@ trust the folder and open an issue.
 ```
 ~/helmcode-whisper/
     index.sqlite3                       search across every meeting
-    2026-08-31-pricing-review/
+    2026-08-31-sprint-review/
         audio-mic.wav                   your microphone
         audio-system.wav                everyone else
         transcript.json                 segments, timestamps, speakers
@@ -34,22 +34,22 @@ out of the model rather than hoped for.
 
 ```json
 {
-  "summary": "La reunión sirvió para cerrar el precio del Tier Enterprise...",
+  "summary": "La reunión revisó el estado del proyecto de notas de reuniones...",
   "decisions": [
-    "El precio del Tier Enterprise se fijó en 750, con acuerdo de servicio."
+    "La diarización se deja activada por defecto ahora que corre en GPU."
   ],
   "action_items": [
     {
-      "task": "Tener preparado el anexo del acuerdo de servicio",
-      "owner": "SPEAKER_03",
+      "task": "Documentar cuánto tarda la diarización en cada dispositivo",
+      "owner": "SPEAKER_01",
       "due": "viernes"
     }
   ],
   "open_questions": [
-    "Qué penalización se acepta en el acuerdo de servicio."
+    "Quién puede probar la captura en macOS."
   ],
   "quotes": [
-    { "speaker": "SPEAKER_03", "text": "Yo lo subiría a 900." }
+    { "speaker": "SPEAKER_01", "text": "En CPU no se sostiene una hora." }
   ]
 }
 ```
@@ -86,7 +86,7 @@ unless diarization was skipped, in which case the remote side is `Others`.
     {
       "start": 0.0,
       "end": 25.36,
-      "text": "Buenos días, repasamos el precio del Tier Enterprise.",
+      "text": "Buenos días, repasamos el estado del proyecto.",
       "track": "mic",
       "speaker": "Me",
       "confidence": -0.0437
@@ -123,7 +123,7 @@ The record of what happened, and the only place the numbers live.
 
 ```json
 {
-  "title": "pricing review",
+  "title": "sprint review",
   "started_at": "2026-08-31T11:20:00",
   "tool_version": "0.1.0",
   "duration_seconds": 66.43,
@@ -180,7 +180,7 @@ One JSON object per line on stdout, human output moved to stderr so the two
 audiences do not interleave. Real output, elided:
 
 ```json
-{"event": "start", "meeting": "2026-08-31-pricing-review", "title": "pricing review", "duration_seconds": 66.43, "steps": ["prepare", "transcribe", "diarize", "merge", "notes", "index"]}
+{"event": "start", "meeting": "2026-08-31-sprint-review", "title": "sprint review", "duration_seconds": 66.43, "steps": ["prepare", "transcribe", "diarize", "merge", "notes", "index"]}
 {"event": "step", "step": "prepare", "state": "running"}
 {"event": "step", "step": "prepare", "state": "done", "seconds": 1.47, "from_cache": false, "speech_seconds": 66.6, "chunks": 2}
 {"event": "step", "step": "diarize", "state": "running", "estimate_seconds": 29, "reason": null}
