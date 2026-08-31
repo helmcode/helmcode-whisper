@@ -51,6 +51,6 @@ jobs:
 
       # No test here touches the network or an audio device; the suite covers
       # chunk planning, echo suppression, parsing, storage and the no-egress
-      # check. Anything needing the API is run by hand and recorded in NUMBERS.md.
+      # check. Anything that needs the API is run by hand against the real endpoint.
       - name: Test
         run: uv run pytest -q

@@ -216,6 +216,19 @@ HCW_NOTES_TEMPLATE=~/my-notes-prompt.md hcw process
 Available placeholders: `{{TITLE}}`, `{{DATE}}`, `{{DURATION}}`, `{{SPEAKERS}}`,
 `{{TRANSCRIPT}}`.
 
+The model is a variable too. `deepseek-v4-flash` is the default because it is
+the strongest general model in the catalog with no tier attached, but any chat
+model the API serves will do:
+
+```bash
+HCW_NOTES_MODEL=qwen3.6 hcw process --force
+```
+
+That is also the fix if structured output ever stops working: `json_schema` is
+documented as validated on `qwen3.6` and `gemma4`, and the ladder in
+`pipeline/notes.py` walks down to looser modes rather than failing, so a change
+here shows up as a different `mode` in `meta.json` and not as an error.
+
 What the template does *not* control is the **shape** of the output — the five
 sections are fixed by a JSON schema so that `notes.md`, `notes.html` and the
 search index never have to guess. To change the sections themselves, edit

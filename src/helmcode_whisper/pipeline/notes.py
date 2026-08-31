@@ -32,9 +32,22 @@ from .model import Transcript
 _STRUCTURED_MODES = ("json_schema", "json_object", "plain")
 
 # Past this many characters the transcript is summarized in blocks and the
-# partial results merged. A 60-minute meeting is roughly 55k characters, so the
-# single-pass path covers the common case.
-MAP_REDUCE_THRESHOLD = 120_000
+# partial results merged. A 60-minute meeting is roughly 55k characters, so this
+# is about seven hours of meeting and the single-pass path covers everything
+# short of a conference.
+#
+# It used to be 120k, which was inherited caution rather than a measurement: it
+# meant map-reduce from two hours on, while deepseek-v4-flash holds a million
+# tokens and the whole transcript was using about 4% of that window. The
+# splitting is not free — the final pass only reconciles the summary, so
+# decisions and action items are the ones each block came up with on its own,
+# and a decision revisited in hour three is invisible to the block that recorded
+# it in hour one. Better to hand the model the whole meeting whenever it fits.
+#
+# 400k characters is roughly 130k tokens, which also fits the smallest context
+# in the Helmcode catalog (gemma4 and qwen3.6, 256K). Point HCW_NOTES_MODEL at
+# something narrower and this is the number to bring down with it.
+MAP_REDUCE_THRESHOLD = 400_000
 _BLOCK_CHARS = 60_000
 # Block summaries in flight at once. Smaller than the transcription pool: these
 # are long generations rather than short ones, and there are only ever a handful.
@@ -125,7 +138,7 @@ def generate_notes(
     duration_minutes: float,
     template: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return (notes, stats). Stats carry token usage for NUMBERS.md."""
+    """Return (notes, stats). Stats carry the token usage that lands in meta.json."""
     template = template or find_template()
     text = transcript.as_text()
     if not text.strip():
@@ -336,12 +349,15 @@ def _merge_partials(partials: list[dict[str, Any]]) -> dict[str, Any]:
         "open_questions": [],
         "quotes": [],
     }
-    seen: set[str] = set()
+    # One set per section, not one for both: a sentence can legitimately be a
+    # decision in the block that made it and an open question in the block that
+    # reopened it, and a shared set would silently drop the second appearance.
+    seen: dict[str, set[str]] = {"decisions": set(), "open_questions": set()}
     for part in partials:
         for key in ("decisions", "open_questions"):
             for item in part.get(key, []):
-                if item.lower() not in seen:
-                    seen.add(item.lower())
+                if item.lower() not in seen[key]:
+                    seen[key].add(item.lower())
                     merged[key].append(item)
         merged["action_items"].extend(part.get("action_items", []))
         merged["quotes"].extend(part.get("quotes", []))

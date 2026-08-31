@@ -188,3 +188,27 @@ def test_markdown_leaves_out_empty_sections() -> None:
     assert "## Decisions" not in rendered
     assert "- [ ] send the deck — Ana · Friday" in rendered
     assert "# Standup" in rendered
+
+
+def test_a_sentence_can_be_both_a_decision_and_an_open_question() -> None:
+    """One dedup set covered both sections, so the second appearance vanished."""
+    partials = [
+        {"summary": "a", "decisions": ["Ship on Friday"], "open_questions": [], "quotes": []},
+        {"summary": "b", "decisions": [], "open_questions": ["Ship on Friday"], "quotes": []},
+    ]
+
+    merged = notes._merge_partials(partials)
+
+    assert merged["decisions"] == ["Ship on Friday"]
+    assert merged["open_questions"] == ["Ship on Friday"]
+
+
+def test_a_section_still_dedupes_within_itself() -> None:
+    partials = [
+        {"summary": "a", "decisions": ["Ship on Friday"], "open_questions": [], "quotes": []},
+        {"summary": "b", "decisions": ["ship on friday"], "open_questions": [], "quotes": []},
+    ]
+
+    merged = notes._merge_partials(partials)
+
+    assert merged["decisions"] == ["Ship on Friday"]
