@@ -4,6 +4,12 @@ The README says meeting content only ever reaches `HELMCODE_BASE_URL`. That is
 only true if no module can reach anywhere else, so this test reads the whole
 package looking for absolute URLs and fails on anything that is not the
 configured default.
+
+huggingface.co is the documented exception and the list below is deliberately
+narrow about it: the repo names diarization needs, and nothing that could carry
+a transcript. `hcw doctor` asks that host whether those three repos have been
+accepted, which sends a token and three repo names; pyannote then downloads the
+weights themselves. Both are disclosed in the README's own table.
 """
 
 from __future__ import annotations
@@ -13,6 +19,9 @@ from pathlib import Path
 
 import helmcode_whisper
 from helmcode_whisper.config import DEFAULT_BASE_URL
+
+# How the f-string in `diarize.RepoAccess.url` reads in the source.
+HF_REPO_PLACEHOLDER = "{self.repo}"
 
 PACKAGE_ROOT = Path(helmcode_whisper.__file__).parent
 URL = re.compile(r"https?://[^\s\"'<>)]+")
@@ -24,6 +33,11 @@ ALLOWED = {
     "https://helmcode.com",
     "https://huggingface.co/pyannote/speaker-diarization-3.1",
     "https://huggingface.co/pyannote/segmentation-3.0",
+    "https://huggingface.co/pyannote/speaker-diarization-community-1",
+    # `RepoAccess.url`, which builds a link to one of the three repos above for
+    # the person who has to go and accept its terms. Allowed as the template it
+    # is written as, so a different path on that host still fails this test.
+    f"https://huggingface.co/{HF_REPO_PLACEHOLDER}",
 }
 
 

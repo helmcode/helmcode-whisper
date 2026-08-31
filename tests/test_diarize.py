@@ -272,3 +272,103 @@ def test_device_is_unknown_rather_than_fatal_when_torch_will_not_import(monkeypa
     monkeypatch.setattr(builtins, "__import__", refuse)
 
     assert diarize.device() is None
+
+
+# ── the three gated repos, asked about together ────────────────────
+#
+# pyannote asks for the third only after the first two have downloaded, so left
+# to its own order a missing acceptance reads as "I accepted the terms and it
+# still fails" several hundred megabytes in.
+
+
+class _GatedRepoError(Exception):
+    pass
+
+
+class _RepositoryNotFoundError(Exception):
+    pass
+
+
+class _HfHubHTTPError(Exception):
+    pass
+
+
+def _install_fake_hub(monkeypatch, blocked: dict[str, Exception]):
+    import sys
+    import types
+
+    class FakeApi:
+        def __init__(self, token=None):
+            self.token = token
+
+        def model_info(self, repo):
+            if repo in blocked:
+                raise blocked[repo]
+            return {"id": repo}
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.HfApi = FakeApi
+    utils = types.ModuleType("huggingface_hub.utils")
+    utils.GatedRepoError = _GatedRepoError
+    utils.RepositoryNotFoundError = _RepositoryNotFoundError
+    utils.HfHubHTTPError = _HfHubHTTPError
+    hub.utils = utils
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils", utils)
+
+
+def test_all_three_gated_repos_accepted(monkeypatch) -> None:
+    _install_fake_hub(monkeypatch, blocked={})
+
+    results = diarize.gated_access("hf_pretend")
+
+    assert results is not None
+    assert len(results) == len(diarize.GATED_REPOS)
+    assert all(item.ok for item in results)
+
+
+def test_the_third_repo_is_named_when_it_is_the_one_blocking(monkeypatch) -> None:
+    """community-1 is the one every guide leaves out."""
+    third = "pyannote/speaker-diarization-community-1"
+    assert third in diarize.GATED_REPOS
+    _install_fake_hub(monkeypatch, blocked={third: _GatedRepoError()})
+
+    results = diarize.gated_access("hf_pretend")
+
+    assert results is not None
+    blocked = [item for item in results if not item.ok]
+    assert [item.repo for item in blocked] == [third]
+    assert blocked[0].url == f"https://huggingface.co/{third}"
+    assert blocked[0].reason == "terms not accepted"
+
+
+def test_a_404_is_reported_like_the_403_it_really_is(monkeypatch) -> None:
+    """An unauthorized token cannot see a gated repo at all, so HF answers 404."""
+    repo = diarize.GATED_REPOS[0]
+    _install_fake_hub(monkeypatch, blocked={repo: _RepositoryNotFoundError()})
+
+    results = diarize.gated_access("hf_pretend")
+
+    assert results is not None
+    blocked = [item for item in results if not item.ok]
+    assert len(blocked) == 1
+    assert blocked[0].reason == "not visible to this token"
+
+
+def test_no_token_means_there_is_nothing_to_check() -> None:
+    assert diarize.gated_access(None) is None
+    assert diarize.gated_access("") is None
+
+
+def test_without_huggingface_hub_the_check_is_skipped_not_failed(monkeypatch) -> None:
+    """`doctor` reports what it can and never raises."""
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name.startswith("huggingface_hub"):
+            raise ImportError("no huggingface_hub")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    assert diarize.gated_access("hf_pretend") is None

@@ -167,6 +167,59 @@ def device() -> Device | None:
     return Device("cpu", advice=advice)
 
 
+@dataclass(frozen=True)
+class RepoAccess:
+    """Whether the token reaches one gated repo, and what to do when it does not."""
+
+    repo: str
+    ok: bool
+    reason: str | None = None
+
+    @property
+    def url(self) -> str:
+        return f"https://huggingface.co/{self.repo}"
+
+
+def gated_access(token: str | None) -> list[RepoAccess] | None:
+    """Ask about all three gated repos up front. None when it cannot be checked.
+
+    pyannote downloads the first two and only then asks for the third, so a
+    missing acceptance surfaces as a 403 several hundred megabytes into a run
+    that looked like it was working. Asking here costs three HEAD-shaped
+    requests and names the repo that is actually blocking.
+    """
+    if not token:
+        return None
+    try:
+        from huggingface_hub import HfApi
+        from huggingface_hub.utils import (
+            GatedRepoError,
+            HfHubHTTPError,
+            RepositoryNotFoundError,
+        )
+    except ImportError:
+        return None
+
+    api = HfApi(token=token)
+    results: list[RepoAccess] = []
+    for repo in GATED_REPOS:
+        try:
+            api.model_info(repo)
+        except GatedRepoError:
+            results.append(RepoAccess(repo, False, "terms not accepted"))
+        except RepositoryNotFoundError:
+            # A gated repo an unauthorized token cannot see answers 404 rather
+            # than 403. Same fix, different status.
+            results.append(RepoAccess(repo, False, "not visible to this token"))
+        except HfHubHTTPError as exc:
+            results.append(RepoAccess(repo, False, f"{type(exc).__name__}"))
+        except Exception as exc:  # noqa: BLE001 - doctor never raises
+            results.append(RepoAccess(repo, False, f"{type(exc).__name__}: {exc}"))
+        else:
+            results.append(RepoAccess(repo, True))
+    return results
+
+
 def _machine_has_an_nvidia_gpu() -> bool:
     """Ask the driver, not torch. Cheap, and the whole point is that torch is wrong."""
     if shutil.which("nvidia-smi") is None:

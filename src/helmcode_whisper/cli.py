@@ -155,7 +155,7 @@ def doctor() -> None:
                 )
 
     hairline("diarization")
-    from .pipeline.diarize import availability, device
+    from .pipeline.diarize import availability, device, gated_access
 
     usable, reason = availability()
     status_line(
@@ -179,6 +179,23 @@ def doctor() -> None:
         f"hf token {'set' if config.hf_token else 'not set'}",
         "" if config.hf_token else "needed only for pyannote weights",
     )
+
+    # The three gated repos, asked about together. pyannote asks for the third
+    # only after the first two have downloaded, so on its own timetable a
+    # missing acceptance looks like "I accepted the terms and it still fails".
+    repos = gated_access(config.hf_token) if usable else None
+    if repos is not None:
+        blocked = [item for item in repos if not item.ok]
+        if not blocked:
+            status_line("ok", f"weights  {len(repos)} of {len(repos)} gated repos accepted")
+        else:
+            status_line(
+                "err",
+                f"weights  {len(blocked)} of {len(repos)} gated repos not accepted",
+                "accept the terms, logged in, at the URLs below",
+            )
+            for item in blocked:
+                status_line("err", f"         {item.url}", item.reason or "")
     console().print()
 
 

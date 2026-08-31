@@ -45,9 +45,11 @@ logs, and no training on your data. Diarization doesn't even go that far. The
 step that turns a voice into an identity runs on your CPU, always, by design.
 
 There's one other host in the picture, and it's worth naming rather than
-hiding: if you enable diarization, pyannote downloads its model weights from
-huggingface.co the first time it runs. No meeting content is sent there, and you
-can pre-download the weights and then work fully offline.
+hiding. If you enable diarization, huggingface.co is involved twice: `hcw
+doctor` asks it whether you have accepted the terms of the three gated pyannote
+repos, which sends your token and those three names, and pyannote then downloads
+the model weights the first time it runs. No meeting content goes to either.
+Pre-download the weights and you can work fully offline.
 
 ## What this is not
 
