@@ -118,27 +118,37 @@ it prints on the way, colour stripped:
 P R O C E S S I N G
   ~/helmcode-whisper/2026-08-31-sprint-review
 
- + mic     1.1 min  0.5 min of speech in 1 chunk
- + system  1.1 min  0.6 min of speech in 1 chunk
-  transcribing -------------------------------- 2/2 0:00:02
- + transcribed 5 segments  language es
- + diarization  15 turns on cuda  11s, alongside transcription
- + notes generated via json_schema  1142 in / 8724 out tokens
- + indexed  11 passages  11 embedded
+ + mic     1.4 min  0.6 min of speech in 1 chunk
+ + system  1.4 min  0.8 min of speech in 1 chunk
+  transcribing -------------------------------- 2/2 0:00:03
+ + transcribed 6 segments  language es
+ + diarization  13 turns on cuda  20s, alongside transcription
+ + transcript  6 turns  Me, SPEAKER_00
+ + notes generated via json_schema  1177 in / 6600 out tokens
+ + indexed  6 passages  6 embedded
 
-  prepare 1s  transcribe 3s  diarize 8s  notes 42s  index 1s   total 55s
+  prepare 2s  transcribe 4s  diarize 16s  notes 29s  index 1s   total 52s
 ```
 
-That is a one-minute two-track recording on a GTX 1660 Ti, with the summary,
-decisions and action items it also prints left out for length.
+An 84-second two-party call on a GTX 1660 Ti, with the summary, decisions and
+action items it also prints left out for length. The two voices are synthesized
+rather than recorded, using the `kokoro` model on the same API, which is why the
+numbers are reproducible without anyone having to sit through a meeting first.
 
-Two things in those numbers are worth reading. `diarize 8s` against
-`diarization 11s` is the overlap: diarization ran while the transcription
-requests were in flight, so it only cost the pipeline what it had left to do
-when they came back. And `notes 42s` of a 55-second run is the whole point of
-where the time goes now: deepseek-v4-flash reasons before it answers, and it
-spent 8,724 output tokens on a one-minute meeting. Transcription and
-diarization are no longer the slow parts. The notes are.
+Three things in there are worth reading.
+
+`diarize 16s` against `diarization 20s` is the overlap: diarization ran while
+the transcription requests were in flight, so it only cost the pipeline what it
+had left to do when they came back.
+
+`notes 29s` of a 52-second run is where the time goes now. deepseek-v4-flash
+reasons before it answers and spent 6,600 output tokens on an 84-second meeting.
+Transcription and diarization are not the slow parts any more. The notes are.
+
+`Me, SPEAKER_00` is the whole of diarization's job on a two-party call: your
+microphone is you by definition, so there is exactly one voice left to identify.
+It gets harder with every extra person on the far side, and `--no-diarize` gives
+you `Me, Others` for free if two parties is all you ever have.
 
 The notes are in Spanish because that's what `templates/notes.md` asks for. See
 [Customizing the notes](#customizing-the-notes).
