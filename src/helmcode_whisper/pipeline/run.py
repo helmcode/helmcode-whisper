@@ -94,7 +94,8 @@ def run_process(
             status_line(
                 "ok" if track.chunks else "warn",
                 f"{track.name:<7} {track.duration_seconds / 60:.1f} min",
-                f"{track.speech_seconds / 60:.1f} min of speech in {len(track.chunks)} chunks"
+                f"{track.speech_seconds / 60:.1f} min of speech in "
+                f"{len(track.chunks)} chunk{'' if len(track.chunks) == 1 else 's'}"
                 + ("" if track.chunks else " — this track will not be transcribed"),
             )
         timings["prepare"] = time.monotonic() - started

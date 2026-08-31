@@ -247,7 +247,16 @@ def _complete(
                 response_format=response_format,
                 temperature=0.2,
             )
-            content = payload["choices"][0]["message"]["content"]
+            content = payload["choices"][0]["message"].get("content")
+            if not content or not content.strip():
+                # A reasoning model can answer with a null or empty `content`,
+                # having spent the whole completion on its reasoning trace. That
+                # is this rung failing, not the request failing: raise the
+                # exception the ladder below already catches so the next mode
+                # gets its turn. Before this, `None` reached `_parse_json`,
+                # AttributeError was not in the tuple below, and an hour of
+                # transcription and diarization died at the last step.
+                raise ValueError("the model returned no content")
             notes = _coerce(_parse_json(content))
         except (ApiError, KeyError, ValueError) as exc:
             last_error = exc
@@ -265,7 +274,14 @@ def _complete(
     raise NotesError(f"The notes model returned nothing usable: {last_error}")
 
 
-def _parse_json(content: str) -> dict[str, Any]:
+def _parse_json(content: str | None) -> dict[str, Any]:
+    """Pull the object out of a response. Raises ValueError when there is none.
+
+    Every caller is inside the structured-output ladder, so ValueError is the
+    contract: it means "this mode did not work, try the next one".
+    """
+    if not content:
+        raise ValueError("no content to parse")
     content = content.strip()
     try:
         return json.loads(content)

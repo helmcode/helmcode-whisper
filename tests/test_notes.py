@@ -212,3 +212,70 @@ def test_a_section_still_dedupes_within_itself() -> None:
     merged = notes._merge_partials(partials)
 
     assert merged["decisions"] == ["Ship on Friday"]
+
+
+def test_a_null_content_walks_the_ladder_instead_of_killing_the_run() -> None:
+    """What actually happened: deepseek answered with content: null.
+
+    `_parse_json(None)` raised AttributeError, which the ladder does not catch,
+    so an hour of transcription and diarization died at the last step. A rung
+    that comes back empty is a rung that did not work.
+    """
+    calls: list[str | None] = []
+
+    class Client:
+        def chat(self, messages, *, model, response_format=None, **kwargs):
+            mode = (response_format or {}).get("type")
+            calls.append(mode)
+            if mode == "json_schema":
+                # Reasoning trace only, nothing in content.
+                return {"choices": [{"message": {"content": None}}], "usage": {}}
+            return {
+                "choices": [{"message": {"content": json.dumps({
+                    "summary": "Recovered.", "decisions": [], "action_items": [],
+                    "open_questions": [], "quotes": [],
+                })}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+
+    notes_data, stats = notes._complete(Client(), "prompt", model="m")
+
+    assert notes_data["summary"] == "Recovered."
+    assert stats["mode"] == "json_object"
+    assert calls[0] == "json_schema"
+
+
+def test_an_empty_string_content_counts_as_a_failed_rung() -> None:
+    class Client:
+        def chat(self, messages, *, model, response_format=None, **kwargs):
+            mode = (response_format or {}).get("type")
+            if mode in ("json_schema", "json_object"):
+                return {"choices": [{"message": {"content": "   "}}], "usage": {}}
+            return {
+                "choices": [{"message": {"content": json.dumps({
+                    "summary": "Plain worked.", "decisions": [], "action_items": [],
+                    "open_questions": [], "quotes": [],
+                })}}],
+                "usage": {},
+            }
+
+    notes_data, stats = notes._complete(Client(), "prompt", model="m")
+
+    assert notes_data["summary"] == "Plain worked."
+    assert stats["mode"] == "plain"
+
+
+def test_every_rung_empty_is_reported_rather_than_crashing() -> None:
+    class Client:
+        def chat(self, messages, *, model, response_format=None, **kwargs):
+            return {"choices": [{"message": {"content": None}}], "usage": {}}
+
+    with pytest.raises(notes.NotesError):
+        notes._complete(Client(), "prompt", model="m")
+
+
+def test_parse_json_rejects_nothing_with_a_value_error() -> None:
+    """ValueError is the ladder's contract for "this mode did not work"."""
+    for empty in (None, "", "   "):
+        with pytest.raises(ValueError):
+            notes._parse_json(empty)
