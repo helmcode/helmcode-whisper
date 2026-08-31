@@ -99,48 +99,37 @@ hcw process
 ```
 
 `process` prints the summary and the action items in your terminal and writes
-`notes.md`, `notes.html` and `transcript.json` next to the audio. Real output
-from a three-minute two-party recording, colour stripped:
+`notes.md`, `notes.html` and `transcript.json` next to the audio. The step lines
+it prints on the way, colour stripped:
 
 ```
 P R O C E S S I N G
-  ~/helmcode-whisper/2026-08-12-pricing-review
+  ~/helmcode-whisper/2026-08-31-pricing-review
 
- + mic     2.2 min  1.2 min of speech in 2 chunks
- + system  3.0 min  1.8 min of speech in 2 chunks
-  transcribing ------------------------------ 4/4 0:00:05
- + transcribed 11 segments  language es
- + diarization  47 turns on cpu  89s, alongside transcription
- + transcript  13 turns  SPEAKER_00, Me, SPEAKER_02
- + notes generated via json_schema  958 in / 624 out tokens
+ + mic     1.1 min  0.5 min of speech in 1 chunk
+ + system  1.1 min  0.6 min of speech in 1 chunk
+  transcribing -------------------------------- 2/2 0:00:02
+ + transcribed 5 segments  language es
+ + diarization  15 turns on cuda  11s, alongside transcription
+ + notes generated via json_schema  1142 in / 8724 out tokens
  + indexed  11 passages  11 embedded
 
-S U M M A R Y ────────────────────────────────────────────────────────────
-  La reunión revisó el estado del proyecto de notas de reuniones. Se
-confirmó que la transcripción funciona con Whisper y el troceo por
-silencios. Se decidió mantener la diarización como opcional y documentar
-el tiempo real que tarda en la máquina. [...]
-
-D E C I S I O N S
-  · La diarización se mantiene como opcional.
-  · Se documentará el tiempo real que tarda la diarización en la máquina.
-
-A C T I O N   I T E M S
-  □ Conseguir la clave de la API y aceptar las condiciones de Hugging
-    Face.  Borja · viernes
-
-F I L E S ─────────────────────────────────────────────────────────────────
- + notes.md         ~/helmcode-whisper/2026-08-12-pricing-review
- + notes.html       ~/helmcode-whisper/2026-08-12-pricing-review
- + transcript.json  ~/helmcode-whisper/2026-08-12-pricing-review
-
-  prepare 2s  transcribe 5s  diarize 84s  notes 8s  index 2s   total 101s
+  prepare 1s  transcribe 3s  diarize 8s  notes 42s  index 1s   total 55s
 ```
 
-Note `diarize 84s` against `diarization 89s`: diarization ran while the
-transcription requests were in flight, so it only cost the pipeline what it had
-left to do when they came back. The notes are in Spanish because that's what
-`templates/notes.md` asks for. See [Customizing the notes](#customizing-the-notes).
+That is a one-minute two-track recording on a GTX 1660 Ti, with the summary,
+decisions and action items it also prints left out for length.
+
+Two things in those numbers are worth reading. `diarize 8s` against
+`diarization 11s` is the overlap: diarization ran while the transcription
+requests were in flight, so it only cost the pipeline what it had left to do
+when they came back. And `notes 42s` of a 55-second run is the whole point of
+where the time goes now: deepseek-v4-flash reasons before it answers, and it
+spent 8,724 output tokens on a one-minute meeting. Transcription and
+diarization are no longer the slow parts. The notes are.
+
+The notes are in Spanish because that's what `templates/notes.md` asks for. See
+[Customizing the notes](#customizing-the-notes).
 
 ### Getting system audio, per platform
 
@@ -452,9 +441,9 @@ uv pip install -e ".[diarize]" --torch-backend=auto
 biggest thing on this page.** PyPI's Windows wheel for torch is CPU-only: 122 MB
 against the 527 MB Linux build that carries CUDA. Install the extra without that
 flag on a machine with a perfectly good NVIDIA GPU and `torch.cuda.is_available()`
-comes back False, diarization runs on the CPU, and nothing tells you. The sample
-run further up this page says `on cpu` for exactly that reason, on a machine
-with a GTX 1660 Ti in it.
+comes back False, diarization runs on the CPU, and nothing tells you. This
+project shipped its first version that way, on a machine with a GTX 1660 Ti in
+it, and the only sign was one word in the output.
 
 `hcw doctor` now reports the device and says so when it finds a GPU the
 installed torch cannot use:
